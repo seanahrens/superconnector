@@ -17,8 +17,10 @@ Press the button once:
 | Solid red         | After your medication cutoff — too late       |
 | Solid amber       | You haven't set a cutoff yet                  |
 
-Green and red bands are 12 hours each. With a 22:00 (10 pm) cutoff: green
-from 10 am through 9:59 pm; red from 10 pm through 9:59 am.
+Green and red bands are 12 hours each. With a 1 am cutoff (a common
+choice for "I want to be in bed before then"): green from 1 pm through
+12:59 am; red from 1 am through 12:59 pm. Most users pick a cutoff
+somewhere between 10 pm and 4 am.
 
 ### Button cheat-sheet
 
@@ -38,16 +40,22 @@ which mode you'll enter when you let go.
 Hold for ~3 seconds, release after the cyan flash but before the magenta
 flash. A warble plays and the LED breathes red↔green for 1 second.
 Then tap N times where **N is the hour of your cutoff on a 24-hour
-clock**:
+clock**. Most realistic cutoffs land between 10 pm and 4 am:
 
 - 22 taps = 10 pm cutoff
 - 23 taps = 11 pm cutoff
 - 24 taps = midnight cutoff
-- 13 taps = 1 pm cutoff (unusual but valid)
+- 1 tap  = 1 am cutoff
+- 2 taps = 2 am cutoff
+- 3 taps = 3 am cutoff
+- 4 taps = 4 am cutoff
+
+Any 1–24 value works (e.g. 13 taps = 1 pm), but the 12-hour-green/
+12-hour-red logic is calibrated for the late-evening case.
 
 Stop tapping. After 3 seconds of silence: two green blinks = saved; two
 red blinks = invalid (>24 or 0 taps). You only do this once; the value
-persists across reboots.
+persists across reboots and power loss.
 
 ## Should you set up WiFi?
 
@@ -88,6 +96,29 @@ the hour right as the real-world time crosses to that hour.
 
 You'll need to repeat this every couple of weeks as the internal clock
 drifts. A weekend morning ritual works well.
+
+## What happens when the device is unplugged
+
+The M5Stack ATOM has no battery — when you unplug it, the wall clock
+**stops and is lost**. Two things to know:
+
+**Your settings survive.** The medication cutoff time, WiFi credentials,
+and timezone are stored in the ESP32's flash memory and persist across
+power loss. You do *not* need to re-set the cutoff or re-provision WiFi
+after unplugging.
+
+**The wall clock does not.** When you plug back in:
+
+- *With WiFi*: the device reconnects, pulls the time from NTP, and is
+  back to working correctly within a few seconds of the boot-LED blinks.
+  You won't notice the gap.
+- *Without WiFi*: the clock will be wrong (typically reading some time
+  in 1970). Pressing the button will give a misleading green/red answer
+  until you re-run the manual clock-setting routine described above.
+  The two short red blinks at boot are your reminder.
+
+If you move the device or lose power often and don't want to re-set the
+clock each time, set up WiFi.
 
 ## First-time setup (step-by-step)
 
