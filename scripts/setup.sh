@@ -125,6 +125,10 @@ secret_already_set() {
     " >/dev/null
 }
 
+# Captured from interactive prompts so we can use them in the final printout.
+EMAIL_FROM_VALUE=""
+EMAIL_TO_VALUE=""
+
 prompt_secret() {
   local name=$1 hint=$2
   if secret_already_set "$name"; then
@@ -142,6 +146,10 @@ prompt_secret() {
   fi
   printf '%s' "$value" | $WRANGLER secret put "$name" >/dev/null
   green "    set"
+  case "$name" in
+    EMAIL_FROM) EMAIL_FROM_VALUE="$value" ;;
+    EMAIL_TO)   EMAIL_TO_VALUE="$value" ;;
+  esac
 }
 
 generate_and_set_secret() {
@@ -219,26 +227,74 @@ dim "  updated pages/wrangler.toml [vars]"
 # 9. Build + deploy Pages
 # ──────────────────────────────────────────────────────────────────────────────
 bold "▸ building and deploying SvelteKit"
-(cd pages && npm run build && $WRANGLER deploy 2>&1 | tail -15)
-green "  pages deployed"
+pages_out=$( (cd pages && npm run build && $WRANGLER deploy 2>&1) )
+printf '%s\n' "$pages_out" | tail -15
+pages_url=$(printf '%s\n' "$pages_out" | grep -oE 'https://[a-zA-Z0-9._-]+\.pages\.dev' | head -1 || true)
+[ -n "$pages_url" ] || pages_url=$(printf '%s\n' "$pages_out" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | tail -1 || true)
+green "  pages deployed at ${pages_url:-(URL not detected — check output above)}"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 10. Done
 # ──────────────────────────────────────────────────────────────────────────────
+
+# Derive the EMAIL_FROM domain (e.g. "mapendar.com" from "daily@mapendar.com")
+# for a clickable dashboard link.
+email_from_domain=""
+if [ -n "$EMAIL_FROM_VALUE" ] && printf '%s' "$EMAIL_FROM_VALUE" | grep -q '@'; then
+  email_from_domain="${EMAIL_FROM_VALUE#*@}"
+fi
+email_routing_url="https://dash.cloudflare.com/?to=/:account/${email_from_domain:-yourdomain.com}/email/routing"
+access_url="https://one.dash.cloudflare.com/?to=/:account/access/apps"
+
 echo
 green "✓ setup complete"
 echo
-echo "  Worker:  $worker_url"
-echo "  MCP:     $worker_url/mcp  (bearer in .secrets/MCP_SECRET)"
-echo "  Auth:    .secrets/WEB_AUTH_SECRET"
+bold "Deployed:"
+echo "  Worker:    $worker_url"
+echo "  Pages:     ${pages_url:-(check output above)}"
+echo "  MCP:       $worker_url/mcp"
+echo "  Health:    $worker_url/health"
 echo
-echo "  Add to Claude Desktop's mcpServers config:"
+bold "Local secret cache (gitignored, keep safe):"
+echo "  .secrets/MCP_SECRET"
+echo "  .secrets/WEB_AUTH_SECRET"
+echo
+bold "──────────────────────────────────────────────────────────────────"
+bold "Next steps (one-time, manual — Cloudflare can't automate these):"
+bold "──────────────────────────────────────────────────────────────────"
+echo
+echo "1. Enable Email Routing on ${email_from_domain:-your domain} so the daily email can send."
+echo "   Open: $email_routing_url"
+echo "   Click: 'Get started' (auto-adds MX + TXT records)."
+echo "   Then: Destination addresses tab → Add → ${EMAIL_TO_VALUE:-your inbox} → click verification email."
+echo "   Until this is done, the 06:00 PT daily-email cron will silently skip sends."
+echo
+echo "2. Add the MCP server to Claude Desktop."
+echo "   File: ~/Library/Application Support/Claude/claude_desktop_config.json"
+echo "   Paste inside the top-level \"mcpServers\" object:"
+echo
 cat <<EOF
-    "superconnector": {
-      "command": "npx",
-      "args": ["mcp-remote", "$worker_url/mcp",
-               "--header", "Authorization:Bearer $mcp_secret"]
-    }
+       "superconnector": {
+         "command": "npx",
+         "args": ["mcp-remote", "$worker_url/mcp",
+                  "--header", "Authorization:Bearer $mcp_secret"]
+       }
 EOF
 echo
-echo "  For production access control, put Cloudflare Access in front of both URLs."
+echo "   Then quit and reopen Claude Desktop."
+echo
+echo "3. (Optional, recommended) Put Cloudflare Access in front of the Worker"
+echo "   and Pages URLs for real protection. Free for ≤50 users."
+echo "   Open: $access_url"
+echo
+bold "Verify:"
+echo "  curl $worker_url/health"
+echo "  # → {\"status\":\"ok\",\"db\":\"reachable\",…}"
+echo
+echo "  # Trigger an ingest run:"
+echo "  curl -X POST -H \"Authorization: Bearer \$(cat .secrets/WEB_AUTH_SECRET)\" \\"
+echo "       $worker_url/api/run/ingest"
+echo
+echo "  # Trigger the daily email (after step 1):"
+echo "  curl -X POST -H \"Authorization: Bearer \$(cat .secrets/WEB_AUTH_SECRET)\" \\"
+echo "       $worker_url/api/run/daily-email"
