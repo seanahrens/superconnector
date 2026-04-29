@@ -5,13 +5,13 @@ export interface Env {
   DB: D1Database;
   VECTORS: VectorizeIndex;
   AI: Ai;
+  EMAIL: SendEmail;
   ENVIRONMENT: string;
 
   // Secrets
   ANTHROPIC_API_KEY: string;
   GRANOLA_API_KEY: string;
   PROTON_ICS_URL: string;
-  RESEND_API_KEY: string;
   EMAIL_TO: string;
   EMAIL_FROM: string;
   MCP_SECRET: string;

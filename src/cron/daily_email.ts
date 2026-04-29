@@ -20,8 +20,8 @@ interface MeetingBrief {
 }
 
 export async function runDailyEmail(env: Env, now: Date = new Date()): Promise<void> {
-  if (!env.RESEND_API_KEY || !env.EMAIL_TO || !env.EMAIL_FROM) {
-    console.log('daily_email skipped — missing email secrets');
+  if (!env.EMAIL_TO || !env.EMAIL_FROM) {
+    console.log('daily_email skipped — missing EMAIL_TO/EMAIL_FROM');
     return;
   }
 

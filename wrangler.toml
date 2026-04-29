@@ -26,6 +26,12 @@ index_name = "people-context"
 [ai]
 binding = "AI"
 
+# Cloudflare Email Workers — sends the daily email.
+# Prereq: a domain on Cloudflare with Email Routing enabled, and the
+# EMAIL_TO address verified as a destination in Email Routing settings.
+[[send_email]]
+name = "EMAIL"
+
 # Cron triggers:
 #   */5 * * * *   ingest new Granola notes
 #   0 13 * * *    daily email at 06:00 America/Los_Angeles (13:00 UTC)

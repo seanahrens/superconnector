@@ -2,8 +2,9 @@
 
 Personal AI-native CRM for connecting founders, funders, talent, and advisors.
 Single-user. Runs as a Cloudflare Worker (D1 + Vectorize + Workers AI), pulls
-notes from Granola, calendar from Proton ICS, sends a daily email via Resend,
-and ships with both an MCP server and a SvelteKit web UI on Cloudflare Pages.
+notes from Granola, calendar from Proton ICS, sends a daily email via
+Cloudflare Email Workers, and ships with both an MCP server and a SvelteKit
+web UI on Cloudflare Pages.
 
 Architecture in `/root/.claude/plans/yes-please-create-a-joyful-horizon.md`.
 
@@ -13,6 +14,11 @@ Architecture in `/root/.claude/plans/yes-please-create-a-joyful-horizon.md`.
 npx wrangler login          # one-time, opens a browser
 npm run setup               # everything else
 ```
+
+**Prerequisite for the daily email:** a domain on Cloudflare with **Email Routing** enabled
+(dashboard → your domain → Email → Email Routing → enable), and your inbox added as a
+**verified destination address** (you'll get a one-click confirmation email). Setup will
+still succeed without this — the cron job will just skip sends until you finish those steps.
 
 `npm run setup` is idempotent. It will:
 
@@ -34,9 +40,8 @@ The six secrets it will prompt for (all skippable on first run; rerun later to f
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys |
 | `GRANOLA_API_KEY` | Granola Business plan API settings |
 | `PROTON_ICS_URL` | Proton Calendar > Settings > Calendar > "Share via link" URL |
-| `RESEND_API_KEY` | https://resend.com/api-keys |
-| `EMAIL_TO` | your inbox (recipient of the daily email) |
-| `EMAIL_FROM` | a verified Resend sender, e.g. `you@yourdomain.com` |
+| `EMAIL_TO` | your inbox (must be a verified destination in Cloudflare Email Routing) |
+| `EMAIL_FROM` | any address on a domain you've enabled Email Routing on, e.g. `daily@yourdomain.com` |
 
 Generated secrets are cached in `.secrets/` (gitignored) so the script can
 re-use them on repeat runs and so the Pages app gets the same `WEB_AUTH_SECRET`

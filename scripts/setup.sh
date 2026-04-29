@@ -96,13 +96,23 @@ fi
 # 5. Apply migrations
 # ──────────────────────────────────────────────────────────────────────────────
 bold "▸ applying D1 migrations (remote)"
-$WRANGLER d1 migrations apply superconnector --remote
+yes | $WRANGLER d1 migrations apply superconnector --remote
 green "  migrations up to date"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 6. Secrets
 # ──────────────────────────────────────────────────────────────────────────────
 bold "▸ provisioning secrets"
+
+# Remove RESEND_API_KEY from older deploys (now using Cloudflare Email Workers).
+$WRANGLER secret list --format=json 2>/dev/null \
+  | node -e "
+    let s = require('fs').readFileSync(0, 'utf8');
+    let j; try { j = JSON.parse(s); } catch { process.exit(1); }
+    process.exit(j.find(x => x.name === 'RESEND_API_KEY') ? 0 : 1);
+  " >/dev/null \
+  && { dim "  removing legacy RESEND_API_KEY"; $WRANGLER secret delete RESEND_API_KEY --force 2>/dev/null || true; } \
+  || true
 
 secret_already_set() {
   $WRANGLER secret list --format=json 2>/dev/null \
@@ -155,9 +165,8 @@ generate_and_set_secret() {
 prompt_secret ANTHROPIC_API_KEY  "https://console.anthropic.com/settings/keys"
 prompt_secret GRANOLA_API_KEY    "Granola Business plan API settings"
 prompt_secret PROTON_ICS_URL     "Proton Calendar > Settings > Share via link URL"
-prompt_secret RESEND_API_KEY     "https://resend.com/api-keys"
-prompt_secret EMAIL_TO           "your inbox (daily-email recipient)"
-prompt_secret EMAIL_FROM         "verified Resend sender (you@yourdomain.com)"
+prompt_secret EMAIL_TO           "your inbox (verified destination in Cloudflare Email Routing)"
+prompt_secret EMAIL_FROM         "any address on a CF-routed domain you control (e.g. daily@yourdomain.com)"
 
 mcp_secret=$(generate_and_set_secret MCP_SECRET)
 web_auth_secret=$(generate_and_set_secret WEB_AUTH_SECRET)
