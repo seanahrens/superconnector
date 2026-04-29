@@ -155,21 +155,17 @@ prompt_secret() {
 generate_and_set_secret() {
   local name=$1
   local cache="$SECRETS_CACHE/$name"
-  local value
-  if [ -f "$cache" ]; then
-    value=$(cat "$cache")
-  else
-    value=$(node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))")
-    printf '%s' "$value" > "$cache"
+  if [ ! -f "$cache" ]; then
+    # process.stdout.write to avoid the trailing newline that console.log adds.
+    node -e "process.stdout.write(require('crypto').randomBytes(24).toString('base64url'))" > "$cache"
     chmod 600 "$cache"
   fi
   if secret_already_set "$name"; then
     dim "  $name (already set)"
   else
-    printf '%s' "$value" | $WRANGLER secret put "$name" >/dev/null
+    cat "$cache" | $WRANGLER secret put "$name" >/dev/null
     green "  $name (generated and set)"
   fi
-  printf '%s' "$value"
 }
 
 prompt_secret ANTHROPIC_API_KEY  "https://console.anthropic.com/settings/keys"
@@ -178,18 +174,28 @@ prompt_secret PROTON_ICS_URL     "Proton Calendar > Settings > Share via link UR
 prompt_secret EMAIL_TO           "your inbox (verified destination in Cloudflare Email Routing)"
 prompt_secret EMAIL_FROM         "any address on a CF-routed domain you control (e.g. daily@yourdomain.com)"
 
-mcp_secret=$(generate_and_set_secret MCP_SECRET)
-web_auth_secret=$(generate_and_set_secret WEB_AUTH_SECRET)
+generate_and_set_secret MCP_SECRET
+generate_and_set_secret WEB_AUTH_SECRET
+mcp_secret=$(cat "$SECRETS_CACHE/MCP_SECRET")
+web_auth_secret=$(cat "$SECRETS_CACHE/WEB_AUTH_SECRET")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7. Deploy worker, capture URL
 # ──────────────────────────────────────────────────────────────────────────────
 bold "▸ deploying Worker"
-worker_out=$($WRANGLER deploy 2>&1)
-printf '%s\n' "$worker_out" | tail -10
-worker_url=$(printf '%s\n' "$worker_out" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | head -1 || true)
+deploy_log=$(mktemp)
+trap 'rm -f "$deploy_log"' EXIT
+# Stream live so the user can see prompts/errors; tee to a log so we can grep
+# the URL afterwards. PIPESTATUS preserves wrangler's real exit code.
+$WRANGLER deploy 2>&1 | tee "$deploy_log"
+deploy_status=${PIPESTATUS[0]}
+if [ "$deploy_status" -ne 0 ]; then
+  warn "  worker deploy failed (exit $deploy_status). See output above."
+  exit "$deploy_status"
+fi
+worker_url=$(grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' "$deploy_log" | head -1 || true)
 if [ -z "$worker_url" ]; then
-  warn "  could not detect Worker URL from deploy output; you'll need to set it manually"
+  warn "  could not detect Worker URL from deploy output; using placeholder"
   worker_url="https://REPLACE_WITH_WORKER_URL"
 fi
 green "  deployed at $worker_url"
@@ -227,10 +233,17 @@ dim "  updated pages/wrangler.toml [vars]"
 # 9. Build + deploy Pages
 # ──────────────────────────────────────────────────────────────────────────────
 bold "▸ building and deploying SvelteKit"
-pages_out=$( (cd pages && npm run build && $WRANGLER deploy 2>&1) )
-printf '%s\n' "$pages_out" | tail -15
-pages_url=$(printf '%s\n' "$pages_out" | grep -oE 'https://[a-zA-Z0-9._-]+\.pages\.dev' | head -1 || true)
-[ -n "$pages_url" ] || pages_url=$(printf '%s\n' "$pages_out" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | tail -1 || true)
+pages_log=$(mktemp)
+( cd pages && npm run build && $WRANGLER deploy 2>&1 ) | tee "$pages_log"
+pages_status=${PIPESTATUS[0]}
+if [ "$pages_status" -ne 0 ]; then
+  warn "  pages deploy failed (exit $pages_status). See output above."
+  rm -f "$pages_log"
+  exit "$pages_status"
+fi
+pages_url=$(grep -oE 'https://[a-zA-Z0-9._-]+\.pages\.dev' "$pages_log" | head -1 || true)
+[ -n "$pages_url" ] || pages_url=$(grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' "$pages_log" | tail -1 || true)
+rm -f "$pages_log"
 green "  pages deployed at ${pages_url:-(URL not detected — check output above)}"
 
 # ──────────────────────────────────────────────────────────────────────────────
