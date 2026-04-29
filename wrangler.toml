@@ -1,0 +1,33 @@
+name = "superconnector"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Local dev defaults; secrets are configured via `wrangler secret put`.
+[vars]
+ENVIRONMENT = "production"
+
+# Cloudflare D1 (SQLite). Run `wrangler d1 create superconnector` once and
+# paste the returned database_id here.
+[[d1_databases]]
+binding = "DB"
+database_name = "superconnector"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "migrations"
+
+# Cloudflare Vectorize for semantic person search.
+# Run `wrangler vectorize create people-context --dimensions=768 --metric=cosine`
+# once before first deploy.
+[[vectorize]]
+binding = "VECTORS"
+index_name = "people-context"
+
+# Cron triggers:
+#   */5 * * * *   ingest new Granola notes
+#   0 13 * * *    daily email at 06:00 America/Los_Angeles (13:00 UTC)
+[triggers]
+crons = ["*/5 * * * *", "0 13 * * *"]
+
+# Observability
+[observability]
+enabled = true
