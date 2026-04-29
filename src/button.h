@@ -7,7 +7,7 @@ namespace button {
 enum class Event : uint8_t {
     kNone,
     kSinglePress,
-    kEnterSetBreakpoint,  // released between 2 s and 4 s holds (mode-2)
+    kEnterSetCutoff,      // released between 2 s and 4 s holds (mode-2)
     kEnterSetHour,        // released after 4 s hold (mode-1)
     kHit2sMark,           // crossed the 2 s boundary while still held
     kHit4sMark,           // crossed the 4 s boundary while still held

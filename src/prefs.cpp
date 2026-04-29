@@ -5,7 +5,7 @@
 namespace {
 
 constexpr const char* kNs = "sleepmed";
-constexpr const char* kKeyBreakpoint = "bp";
+constexpr const char* kKeyCutoff = "cutoff";
 constexpr const char* kKeyTz = "tz";
 constexpr const char* kKeyGeoEpoch = "geo";
 
@@ -19,12 +19,12 @@ void begin() {
     nvs.begin(kNs, false);
 }
 
-uint8_t load_breakpoint_hour() {
-    return nvs.getUChar(kKeyBreakpoint, kBreakpointUnset);
+uint8_t load_cutoff_hour() {
+    return nvs.getUChar(kKeyCutoff, kCutoffUnset);
 }
 
-void save_breakpoint_hour(uint8_t h) {
-    nvs.putUChar(kKeyBreakpoint, h);
+void save_cutoff_hour(uint8_t h) {
+    nvs.putUChar(kKeyCutoff, h);
 }
 
 String load_tz_posix() {

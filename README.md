@@ -11,63 +11,97 @@ Echo** (LED + speaker).
 
 Press the button once:
 
-| LED for 3 seconds | Meaning                            |
-|-------------------|------------------------------------|
-| Solid green       | Before your cutoff — OK to take it |
-| Solid red         | After your cutoff — too late       |
-| Solid amber       | You haven't set a cutoff yet       |
+| LED for 3 seconds | Meaning                                       |
+|-------------------|-----------------------------------------------|
+| Solid green       | Before your medication cutoff — OK to take it |
+| Solid red         | After your medication cutoff — too late       |
+| Solid amber       | You haven't set a cutoff yet                  |
 
-Green/red bands are 12 hours each. With a 10 pm cutoff: green from 10 am
-through 9:59 pm; red from 10 pm through 9:59 am.
+Green and red bands are 12 hours each. With a 22:00 (10 pm) cutoff: green
+from 10 am through 9:59 pm; red from 10 pm through 9:59 am.
 
 ### Button cheat-sheet
 
-| Action                  | Effect                              |
-|-------------------------|-------------------------------------|
-| Single press (<0.6 s)   | Show green/red/amber answer         |
-| Hold 2–4 s              | Set bedtime cutoff (PM hour, 1–12)  |
-| Hold 4 s+               | Set wall-clock hour (24 h, 1–24)    |
-| Hold 10 s during boot   | Factory reset (wipes WiFi + cutoff) |
+| Action                  | Effect                                 |
+|-------------------------|----------------------------------------|
+| Single press (<0.6 s)   | Show green/red/amber answer            |
+| Hold 2–4 s              | Set medication cutoff time (24 h, 1–24)|
+| Hold 4 s+               | Set wall-clock hour (24 h, 1–24)       |
+| Hold 10 s during boot   | Factory reset (wipes WiFi + cutoff)    |
 
-While holding, the LED flashes **cyan** at 2 s ("release for cutoff mode")
-and **magenta** at 4 s ("release for hour mode") so you know which mode
-you'll enter.
+While holding, the LED flashes **cyan** at 2 s ("release for cutoff
+mode") and **magenta** at 4 s ("release for clock mode"), so you know
+which mode you'll enter when you let go.
 
-### Setting the cutoff
+### Setting the medication cutoff time
 
 Hold for ~3 seconds, release after the cyan flash but before the magenta
-flash. A warble plays and the LED breathes red↔green. Then tap N times
-where N is the PM hour of your cutoff:
+flash. A warble plays and the LED breathes red↔green for 1 second.
+Then tap N times where **N is the hour of your cutoff on a 24-hour
+clock**:
 
-- 9 taps = 9 pm cutoff
-- 10 taps = 10 pm cutoff
-- 11 taps = 11 pm cutoff
-- 12 taps = midnight cutoff
+- 22 taps = 10 pm cutoff
+- 23 taps = 11 pm cutoff
+- 24 taps = midnight cutoff
+- 13 taps = 1 pm cutoff (unusual but valid)
 
 Stop tapping. After 3 seconds of silence: two green blinks = saved; two
-red blinks = invalid (>12 or 0 taps). You only do this once; it persists
-across reboots.
+red blinks = invalid (>24 or 0 taps). You only do this once; the value
+persists across reboots.
 
-### Setting the hour (only if you skipped WiFi)
+## Should you set up WiFi?
 
-Hold for ~5 seconds (past both flashes), release. A 1-second tone plays
-and the LED pulses fast white. Tap in 24-hour format:
+The device only knows what time it is from its internal clock, which is
+not very accurate on its own — it drifts by about a minute per week.
+WiFi solves this by syncing the clock to NTP every day. Without WiFi,
+you'll need to set the clock manually now, and again every few weeks
+when the drift gets noticeable.
 
-- 1 tap = 1 am
-- 13 taps = 1 pm
-- 23 taps = 11 pm
-- 24 taps = midnight
+**Set up WiFi if you can.** It's a one-time, ~3-minute setup with a phone
+app, and after that the device is fully autonomous: it figures out its
+own timezone (handles DST too) and the clock stays accurate forever.
 
-If WiFi is set up, NTP handles this automatically — skip this step.
+**Skip WiFi if you'd rather not deal with it** — for instance, if you
+keep the device somewhere with no internet, or you don't want it on your
+network. The trade-off is the manual clock-setting routine described
+below.
+
+### How to set the clock without WiFi
+
+The device's clock has an hour but no minute or second — when you set
+the hour, it locks the minute and second to `:00`. The trick is to set
+the hour right as the real-world time crosses to that hour.
+
+1. Pick an upcoming hour on the actual clock — **early morning is
+   easiest** because it requires the fewest button taps. 7 am only needs
+   7 taps; 11 pm needs 23.
+2. Set an alarm on your phone for the minute before that hour — for
+   example, **6:59 am** if you're targeting 7 am.
+3. When the alarm goes off, hold the button on the device for ~5 seconds
+   (past both the cyan and magenta flashes), then release. A tone plays
+   and the LED pulses fast white.
+4. Tap the button N times where N is the upcoming hour on a 24-hour
+   clock (7 taps for 7 am; 19 taps for 7 pm; 24 taps for midnight).
+5. Stop tapping and wait. The device locks in the time about 3 seconds
+   after your last tap — which lines up with the actual hour rolling
+   over to N:00.
+
+You'll need to repeat this every couple of weeks as the internal clock
+drifts. A weekend morning ritual works well.
 
 ## First-time setup (step-by-step)
 
 ### What you need
 
-- An **M5Stack ATOM Lite** or **ATOM Echo** ($10–$15 from m5stack.com or Amazon)
+- An **M5Stack ATOM Lite** ([Amazon](https://www.amazon.com/s?k=m5stack+atom+lite)
+  · [Google](https://www.google.com/search?q=m5stack+atom+lite))
+  or **M5Stack ATOM Echo**
+  ([Amazon](https://www.amazon.com/s?k=m5stack+atom+echo)
+  · [Google](https://www.google.com/search?q=m5stack+atom+echo))
+  — about $10–$15
 - A USB-C cable
 - A computer with Python 3
-- A phone for one-time WiFi setup (optional)
+- A phone for one-time WiFi setup (optional — see above)
 
 ### 1. Install PlatformIO
 
@@ -75,7 +109,8 @@ The easiest path is the VS Code extension:
 
 1. Install [Visual Studio Code](https://code.visualstudio.com/)
 2. Open VS Code → Extensions sidebar
-3. Search for **PlatformIO IDE**, install. Wait for first-time setup (a few minutes).
+3. Search for **PlatformIO IDE**, install. Wait for first-time setup
+   (a few minutes).
 
 Or via the command line:
 
@@ -95,7 +130,8 @@ cd sleep-med-timer
 Connect the ATOM to your computer with a USB-C cable.
 
 - **macOS / Linux:** usually no driver needed.
-- **Windows:** if the device isn't detected, install the [CP210x driver from Silicon Labs](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers).
+- **Windows:** if the device isn't detected, install the
+  [CP210x driver from Silicon Labs](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers).
 
 ### 4. Build and flash
 
@@ -105,8 +141,9 @@ From the `sleep-med-timer/` directory:
 pio run -t upload
 ```
 
-The first build downloads the ESP32 toolchain and libraries (5–10 minutes).
-Subsequent builds take seconds. PlatformIO auto-detects the serial port.
+The first build downloads the ESP32 toolchain and libraries (5–10
+minutes). Subsequent builds take seconds. PlatformIO auto-detects the
+serial port.
 
 When you see `[SUCCESS] Took N seconds`, the device is running.
 
@@ -124,11 +161,7 @@ pio device monitor
 
 Boot messages stream at 115200 baud. Press `Ctrl+T` then `Ctrl+C` to exit.
 
-### 6. Set up WiFi (optional but recommended)
-
-WiFi lets the device sync its clock daily over NTP and look up your
-timezone via IP geolocation. Without it the internal clock drifts a
-minute or so per week and you have to set the hour manually.
+### 6. Set up WiFi (recommended — see "Should you set up WiFi?" above)
 
 1. On first boot, the LED turns **solid blue** — it's broadcasting a BLE
    provisioning service.
@@ -141,10 +174,16 @@ minute or so per week and you have to set the hour manually.
 5. Pick your WiFi network and enter the password.
 6. Two short green blinks = online.
 
-### 7. Set your bedtime cutoff
+If you skipped WiFi, set the clock manually now using the procedure in
+"How to set the clock without WiFi" above. Two short **red** blinks at
+boot mean the device couldn't reach WiFi and is running on its internal
+clock — that's the cue to do the manual routine.
 
-See [Setting the cutoff](#setting-the-cutoff) above. Until you do this,
-every press gives an **amber** "set me up first" light.
+### 7. Set your medication cutoff
+
+See [Setting the medication cutoff time](#setting-the-medication-cutoff-time)
+above. Until you do this, every press gives an **amber** "set me up first"
+light.
 
 ### 8. Done
 
@@ -153,20 +192,20 @@ the button whenever you wake up wondering if it's too late.
 
 ## LED reference (full)
 
-| Color / pattern              | Meaning                                   |
-|------------------------------|-------------------------------------------|
-| Off                          | Idle                                      |
-| Solid blue                   | BLE provisioning (waiting for phone)      |
-| Slow blue pulse              | Connecting to WiFi                        |
-| 2 short green blinks (boot)  | Online                                    |
-| 2 short red blinks (boot)    | Offline (will use internal clock)         |
+| Color / pattern              | Meaning                                    |
+|------------------------------|--------------------------------------------|
+| Off                          | Idle                                       |
+| Solid blue                   | BLE provisioning (waiting for phone)       |
+| Slow blue pulse              | Connecting to WiFi                         |
+| 2 short green blinks (boot)  | Online                                     |
+| 2 short red blinks (boot)    | Offline (will use internal clock)          |
 | Cyan flash                   | 2-second hold mark — release = cutoff mode |
-| Magenta flash                | 4-second hold mark — release = hour mode  |
-| Breathing red↔green          | Cutoff-set window open                    |
-| Fast white pulse             | Hour-set window open                      |
-| 2 green blinks (post-set)    | Saved successfully                        |
-| 2 red blinks (post-set)      | Invalid count, not saved                  |
-| 3 red blinks (boot)          | Factory reset confirmed                   |
+| Magenta flash                | 4-second hold mark — release = clock mode  |
+| Breathing red↔green          | Cutoff-set window open                     |
+| Fast white pulse             | Clock-set window open                      |
+| 2 green blinks (post-set)    | Saved successfully                         |
+| 2 red blinks (post-set)      | Invalid count, not saved                   |
+| 3 red blinks (boot)          | Factory reset confirmed                    |
 
 ## Hacking on it
 

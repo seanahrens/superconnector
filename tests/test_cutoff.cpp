@@ -7,29 +7,18 @@
 
 #include <cstdio>
 #include <cstdint>
-#include <cstdlib>
 
 namespace {
 
 int g_failures = 0;
 
-void check_cutoff_map(uint8_t bp, uint8_t expected) {
-    const uint8_t got = app::breakpoint_to_cutoff_24h(bp);
-    if (got != expected) {
-        std::fprintf(stderr,
-                     "FAIL: breakpoint_to_cutoff_24h(%u) -> %u, expected %u\n",
-                     bp, got, expected);
-        g_failures++;
-    }
-}
-
-void check_band(uint8_t bp, uint8_t hour, bool expected_green,
-                const char* label) {
-    const bool got = app::is_before_cutoff(hour, bp);
+void check(uint8_t cutoff, uint8_t hour, bool expected_green,
+           const char* label) {
+    const bool got = app::is_before_cutoff(hour, cutoff);
     if (got != expected_green) {
         std::fprintf(stderr,
-                     "FAIL [%s]: bp=%u hour=%u -> %s, expected %s\n",
-                     label, bp, hour, got ? "GREEN" : "red",
+                     "FAIL [%s]: cutoff=%u hour=%u -> %s, expected %s\n",
+                     label, cutoff, hour, got ? "GREEN" : "red",
                      expected_green ? "GREEN" : "red");
         g_failures++;
     }
@@ -38,58 +27,55 @@ void check_band(uint8_t bp, uint8_t hour, bool expected_green,
 }  // namespace
 
 int main() {
-    // ---- breakpoint_to_cutoff_24h: 1->13, 11->23, 12->0 ----
-    check_cutoff_map(1, 13);
-    check_cutoff_map(2, 14);
-    check_cutoff_map(5, 17);
-    check_cutoff_map(10, 22);
-    check_cutoff_map(11, 23);
-    check_cutoff_map(12, 0);
+    // ---- cutoff = 22:00 (10 pm). Green 10am..21:59, red 22:00..09:59 ----
+    check(22, 10, true,  "cutoff=22 10am edge-green");
+    check(22, 11, true,  "cutoff=22 11am");
+    check(22, 14, true,  "cutoff=22 2pm");
+    check(22, 21, true,  "cutoff=22 9pm last-green");
+    check(22, 22, false, "cutoff=22 10pm cutoff");
+    check(22, 23, false, "cutoff=22 11pm");
+    check(22,  0, false, "cutoff=22 midnight");
+    check(22,  2, false, "cutoff=22 2am");
+    check(22,  9, false, "cutoff=22 9am last-red");
 
-    // ---- breakpoint = 10 (cutoff 22:00). Spec: green 10am..21:59, red 22:00..09:59 ----
-    // Green band:
-    check_band(10, 10, true,  "bp=10 10am edge-green");
-    check_band(10, 11, true,  "bp=10 11am");
-    check_band(10, 14, true,  "bp=10 2pm");
-    check_band(10, 21, true,  "bp=10 9pm last-green");
-    // Red band:
-    check_band(10, 22, false, "bp=10 10pm cutoff");
-    check_band(10, 23, false, "bp=10 11pm");
-    check_band(10,  0, false, "bp=10 midnight");
-    check_band(10,  2, false, "bp=10 2am");
-    check_band(10,  9, false, "bp=10 9am last-red");
+    // ---- cutoff = 0 (midnight). Green noon..23:59, red 00:00..11:59 ----
+    check(0, 12, true,  "cutoff=0 noon edge-green");
+    check(0, 18, true,  "cutoff=0 6pm");
+    check(0, 23, true,  "cutoff=0 11pm last-green");
+    check(0,  0, false, "cutoff=0 midnight cutoff");
+    check(0,  6, false, "cutoff=0 6am");
+    check(0, 11, false, "cutoff=0 11am last-red");
 
-    // ---- breakpoint = 12 (cutoff 00:00 = midnight). Green noon..23:59, red 00:00..11:59 ----
-    check_band(12, 12, true,  "bp=12 noon edge-green");
-    check_band(12, 18, true,  "bp=12 6pm");
-    check_band(12, 23, true,  "bp=12 11pm last-green");
-    check_band(12,  0, false, "bp=12 midnight cutoff");
-    check_band(12,  6, false, "bp=12 6am");
-    check_band(12, 11, false, "bp=12 11am last-red");
+    // ---- cutoff = 23 (11 pm). Green 11am..22:59, red 23:00..10:59 ----
+    check(23, 11, true,  "cutoff=23 11am edge-green");
+    check(23, 22, true,  "cutoff=23 10pm last-green");
+    check(23, 23, false, "cutoff=23 11pm cutoff");
+    check(23, 10, false, "cutoff=23 10am last-red");
 
-    // ---- breakpoint = 11 (cutoff 23:00). Green 11am..22:59, red 23:00..10:59 ----
-    check_band(11, 11, true,  "bp=11 11am edge-green");
-    check_band(11, 22, true,  "bp=11 10pm last-green");
-    check_band(11, 23, false, "bp=11 11pm cutoff");
-    check_band(11, 10, false, "bp=11 10am last-red");
+    // ---- cutoff = 13 (1 pm). Green 1am..12:59, red 13:00..00:59 ----
+    check(13,  1, true,  "cutoff=13 1am edge-green");
+    check(13, 12, true,  "cutoff=13 noon last-green");
+    check(13, 13, false, "cutoff=13 1pm cutoff");
+    check(13,  0, false, "cutoff=13 midnight last-red");
 
-    // ---- breakpoint = 1 (cutoff 13:00 = 1pm). Green 1am..12:59, red 13:00..00:59 ----
-    check_band(1,  1, true,  "bp=1 1am edge-green");
-    check_band(1, 12, true,  "bp=1 noon last-green");
-    check_band(1, 13, false, "bp=1 1pm cutoff");
-    check_band(1,  0, false, "bp=1 midnight last-red");
+    // ---- cutoff = 9 (9 am — unusual but valid). Green 9pm..08:59,
+    //      red 9am..20:59 ----
+    check(9, 21, true,  "cutoff=9 9pm edge-green");
+    check(9,  8, true,  "cutoff=9 8am last-green");
+    check(9,  9, false, "cutoff=9 9am cutoff");
+    check(9, 20, false, "cutoff=9 8pm last-red");
 
-    // ---- exhaustive coverage: every (bp, hour) pair must have a definite answer
+    // ---- exhaustive: every (cutoff, hour) pair must have a definite answer
     //      and the band sizes must be exactly 12+12 ----
-    for (uint8_t bp = 1; bp <= 12; ++bp) {
+    for (uint8_t c = 0; c < 24; ++c) {
         int green_count = 0, red_count = 0;
         for (uint8_t h = 0; h < 24; ++h) {
-            (app::is_before_cutoff(h, bp) ? green_count : red_count)++;
+            (app::is_before_cutoff(h, c) ? green_count : red_count)++;
         }
         if (green_count != 12 || red_count != 12) {
             std::fprintf(stderr,
-                         "FAIL: bp=%u green=%d red=%d (expected 12+12)\n",
-                         bp, green_count, red_count);
+                         "FAIL: cutoff=%u green=%d red=%d (expected 12+12)\n",
+                         c, green_count, red_count);
             g_failures++;
         }
     }

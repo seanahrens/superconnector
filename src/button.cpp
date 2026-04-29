@@ -55,7 +55,7 @@ Event poll() {
             g_press_start_ms = 0;
             if (held < timings::kSinglePressMaxMs) return Event::kSinglePress;
             if (held >= timings::kHold4sMs) return Event::kEnterSetHour;
-            if (held >= timings::kHold2sMs) return Event::kEnterSetBreakpoint;
+            if (held >= timings::kHold2sMs) return Event::kEnterSetCutoff;
             return Event::kNone;  // released between 600 ms and 2 s = ignored
         }
     }

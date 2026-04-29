@@ -36,11 +36,11 @@ void hold_led(led::Effect e, uint32_t duration_ms) {
 void show_answer() {
     auto& s = app::get();
     led::Effect eff;
-    if (s.breakpoint_hour == prefs::kBreakpointUnset) {
+    if (s.cutoff_hour_24 == prefs::kCutoffUnset) {
         eff = led::Effect::kSolidAmber3s;
         audio::chime_sad();
     } else if (app::is_before_cutoff(clock_sync::local_hour(),
-                                     s.breakpoint_hour)) {
+                                     s.cutoff_hour_24)) {
         eff = led::Effect::kSolidGreen3s;
         audio::chime_happy();
     } else {
@@ -80,16 +80,19 @@ uint32_t run_set_window(led::Effect window_effect, void (*opening_beep)()) {
     return count;
 }
 
-void handle_set_breakpoint() {
+void handle_set_cutoff() {
+    // Same 24-hour press convention as SET_HOUR: 1..23 -> that hour,
+    // 24 -> midnight (00), 0 or >24 -> invalid.
     const uint32_t presses = run_set_window(led::Effect::kBreathRedGreen,
                                             audio::mode2_opening);
-    if (presses == 0 || presses > 12) {
+    if (presses == 0 || presses > 24) {
         audio::chime_sad();
         play_led_blocking(led::Effect::kFailRedDouble);
         return;
     }
-    prefs::save_breakpoint_hour(static_cast<uint8_t>(presses));
-    app::get().breakpoint_hour = static_cast<uint8_t>(presses);
+    const uint8_t hour_24 = (presses == 24) ? 0 : static_cast<uint8_t>(presses);
+    prefs::save_cutoff_hour(hour_24);
+    app::get().cutoff_hour_24 = hour_24;
     audio::chime_happy();
     play_led_blocking(led::Effect::kSuccessGreenDouble);
 }
@@ -126,7 +129,7 @@ void setup() {
     play_led_blocking(led::Effect::kFlashWhite80ms);
 
     auto& s = app::get();
-    s.breakpoint_hour = prefs::load_breakpoint_hour();
+    s.cutoff_hour_24 = prefs::load_cutoff_hour();
 
     // Try WiFi for up to 60 s; if it fails we still operate on RTC drift.
     provisioning::connect_or_provision(60000);
@@ -162,8 +165,8 @@ void loop() {
             audio::mark_4s_beep();
             led::set(led::Effect::kOff);
             break;
-        case button::Event::kEnterSetBreakpoint:
-            handle_set_breakpoint();
+        case button::Event::kEnterSetCutoff:
+            handle_set_cutoff();
             break;
         case button::Event::kEnterSetHour:
             handle_set_hour();
