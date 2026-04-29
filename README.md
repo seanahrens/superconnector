@@ -120,106 +120,49 @@ after unplugging.
 If you move the device or lose power often and don't want to re-set the
 clock each time, set up WiFi.
 
-## First-time setup (step-by-step)
+## Quick start
 
-### What you need
-
-- An **M5Stack ATOM Lite** ([Amazon](https://www.amazon.com/s?k=m5stack+atom+lite)
-  · [Google](https://www.google.com/search?q=m5stack+atom+lite))
-  or **M5Stack ATOM Echo**
-  ([Amazon](https://www.amazon.com/s?k=m5stack+atom+echo)
-  · [Google](https://www.google.com/search?q=m5stack+atom+echo))
-  — about $10–$15
-- A USB-C cable
-- A computer with Python 3
-- A phone for one-time WiFi setup (optional — see above)
-
-### 1. Install PlatformIO
-
-The easiest path is the VS Code extension:
-
-1. Install [Visual Studio Code](https://code.visualstudio.com/)
-2. Open VS Code → Extensions sidebar
-3. Search for **PlatformIO IDE**, install. Wait for first-time setup
-   (a few minutes).
-
-Or via the command line:
+You need an **M5Stack ATOM Lite**
+([Amazon](https://www.amazon.com/s?k=m5stack+atom+lite) ·
+[Google](https://www.google.com/search?q=m5stack+atom+lite))
+or **ATOM Echo**
+([Amazon](https://www.amazon.com/s?k=m5stack+atom+echo) ·
+[Google](https://www.google.com/search?q=m5stack+atom+echo))
+— ~$10–$15 — and a USB-C cable.
 
 ```
 pip install platformio
-```
-
-### 2. Clone this repo
-
-```
 git clone https://github.com/seanahrens/sleep-med-timer.git
 cd sleep-med-timer
-```
-
-### 3. Plug in the M5Atom
-
-Connect the ATOM to your computer with a USB-C cable.
-
-- **macOS / Linux:** usually no driver needed.
-- **Windows:** if the device isn't detected, install the
-  [CP210x driver from Silicon Labs](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers).
-
-### 4. Build and flash
-
-From the `sleep-med-timer/` directory:
-
-```
 pio run -t upload
 ```
 
-The first build downloads the ESP32 toolchain and libraries (5–10
-minutes). Subsequent builds take seconds. PlatformIO auto-detects the
-serial port.
+Plug the ATOM in via USB-C before the upload step. First build pulls
+the ESP32 toolchain (5–10 min); after that, builds take seconds.
 
-When you see `[SUCCESS] Took N seconds`, the device is running.
+**Then on the device:**
 
-For the Echo (with audio) instead of the Lite:
+1. **Provision WiFi** (recommended). On first boot the LED is solid
+   blue. Install **ESP BLE Provisioning**
+   ([iOS](https://apps.apple.com/us/app/esp-ble-provisioning/id1473590141) ·
+   [Android](https://play.google.com/store/apps/details?id=com.espressif.provble)),
+   pick `PROV_SLEEPMED`, enter the PoP `sleepmed`, choose your WiFi.
+   Two green blinks = online.
+2. **Set your cutoff**. Hold the button ~3 s, release after the cyan
+   flash; tap N times where N is the cutoff hour on a 24 h clock
+   (22 = 10 pm, 1 = 1 am). Wait 3 s for two green blinks.
 
-```
-pio run -e atom-echo -t upload
-```
+Done — press once to get green/red.
 
-### 5. Watch the serial log (optional)
+If you skipped WiFi, also set the clock once: see [How to set the clock
+without WiFi](#how-to-set-the-clock-without-wifi).
 
-```
-pio device monitor
-```
+### Troubleshooting
 
-Boot messages stream at 115200 baud. Press `Ctrl+T` then `Ctrl+C` to exit.
-
-### 6. Set up WiFi (recommended — see "Should you set up WiFi?" above)
-
-1. On first boot, the LED turns **solid blue** — it's broadcasting a BLE
-   provisioning service.
-2. On your phone, install **ESP BLE Provisioning**
-   ([iOS](https://apps.apple.com/us/app/esp-ble-provisioning/id1473590141) /
-   [Android](https://play.google.com/store/apps/details?id=com.espressif.provble)).
-3. Open the app → *Provision New Device* → *I don't have a QR code* →
-   choose `PROV_SLEEPMED`.
-4. Enter the proof-of-possession code: `sleepmed`
-5. Pick your WiFi network and enter the password.
-6. Two short green blinks = online.
-
-If you skipped WiFi, set the clock manually now using the procedure in
-"How to set the clock without WiFi" above. Two short **red** blinks at
-boot mean the device couldn't reach WiFi and is running on its internal
-clock — that's the cue to do the manual routine.
-
-### 7. Set your medication cutoff
-
-See [Setting the medication cutoff time](#setting-the-medication-cutoff-time)
-above. Until you do this, every press gives an **amber** "set me up first"
-light.
-
-### 8. Done
-
-Place the device on your nightstand plugged into a USB-C charger. Press
-the button whenever you wake up wondering if it's too late.
+- **Windows can't see the device:** install the
+  [CP210x driver from Silicon Labs](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers).
+- **Echo build with audio:** `pio run -e atom-echo -t upload`
+- **Watch boot logs:** `pio device monitor` (Ctrl+T, Ctrl+C to exit).
 
 ## LED reference (full)
 
