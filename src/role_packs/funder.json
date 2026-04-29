@@ -1,0 +1,16 @@
+{
+  "key": "funder",
+  "label": "Funder",
+  "canonical_questions": [
+    "What's your investment thesis in one sentence?",
+    "What stage and check size are you focused on right now?",
+    "What sectors / problem areas are you most active in?",
+    "What signals do you weigh most when committing?",
+    "Anything you're actively hunting for that I might know someone for?"
+  ],
+  "extraction_emphasis": "Capture: thesis, stage focus, check-size range, sectors/themes, recent investments mentioned, how they prefer to be approached, current 'gap' in their pipeline.",
+  "match_weights": {
+    "funder->founder": 1.0,
+    "funder->advisor": 0.4
+  }
+}

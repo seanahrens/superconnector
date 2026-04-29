@@ -22,6 +22,10 @@ migrations_dir = "migrations"
 binding = "VECTORS"
 index_name = "people-context"
 
+# Workers AI: embeddings model `@cf/baai/bge-base-en-v1.5` (768-dim).
+[ai]
+binding = "AI"
+
 # Cron triggers:
 #   */5 * * * *   ingest new Granola notes
 #   0 13 * * *    daily email at 06:00 America/Los_Angeles (13:00 UTC)

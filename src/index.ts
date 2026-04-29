@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../worker-configuration';
+import { runIngest } from './cron/ingest';
+import { runDailyEmail } from './cron/daily_email';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -27,20 +29,20 @@ async function pingDb(env: Env): Promise<boolean> {
 export default {
   fetch: app.fetch,
 
-  async scheduled(event: ScheduledController, _env: Env, ctx: ExecutionContext): Promise<void> {
-    // Cron dispatch — implementations land in Phase 2 (ingest) and Phase 3 (daily email).
-    ctx.waitUntil(handleScheduled(event));
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(handleScheduled(event, env));
   },
 } satisfies ExportedHandler<Env>;
 
-async function handleScheduled(event: ScheduledController): Promise<void> {
+async function handleScheduled(event: ScheduledController, env: Env): Promise<void> {
   const cron = event.cron;
   if (cron === '*/5 * * * *') {
-    // TODO(phase-2): pull new Granola notes and run the ingestion pipeline.
+    const result = await runIngest(env);
+    console.log('ingest', result);
     return;
   }
   if (cron === '0 13 * * *') {
-    // TODO(phase-3): assemble and send the daily email.
+    await runDailyEmail(env);
     return;
   }
 }

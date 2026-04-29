@@ -1,0 +1,17 @@
+{
+  "key": "advisor",
+  "label": "Advisor",
+  "canonical_questions": [
+    "What domains do you advise in — and which do you decline?",
+    "Roughly how much advisory bandwidth do you have right now?",
+    "Who in your network do you most actively vouch for?",
+    "What kinds of intros from me would be highest-leverage?",
+    "Do you prefer 30-min one-offs or ongoing engagements?"
+  ],
+  "extraction_emphasis": "Capture: domains of expertise, current advisory bandwidth, people they vouch for, preferred engagement shape, conflicts to avoid.",
+  "match_weights": {
+    "advisor->founder": 0.9,
+    "advisor->talent": 0.4,
+    "advisor->funder": 0.4
+  }
+}

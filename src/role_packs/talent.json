@@ -1,0 +1,16 @@
+{
+  "key": "talent",
+  "label": "Talent",
+  "canonical_questions": [
+    "What kind of work are you most drawn to right now?",
+    "Are you actively looking, casually open, or staying put for now?",
+    "Where on the risk spectrum are you — established lab, growth stage, early seed, founding team?",
+    "What's your geo flexibility — remote, specific city, willing to relocate?",
+    "Any constraints I should keep in mind (visa, comp floor, timeline)?"
+  ],
+  "extraction_emphasis": "Capture: skills, looking-vs-staying status, risk tolerance, geo flexibility, comp/visa/timeline constraints, the kind of org they'd thrive in.",
+  "match_weights": {
+    "talent->founder": 0.9,
+    "talent->advisor": 0.3
+  }
+}

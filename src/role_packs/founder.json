@@ -1,0 +1,18 @@
+{
+  "key": "founder",
+  "label": "Founder",
+  "canonical_questions": [
+    "What's your one-sentence pitch?",
+    "What stage are you at — idea, prototype, traction, scaling?",
+    "Are you exploring cofounders, raising, hiring, or heads-down building?",
+    "What's the biggest unknown holding you back this month?",
+    "What would great help look like from me right now?"
+  ],
+  "extraction_emphasis": "If they describe a venture, capture: stage, problem area, current ask (cofounder/funder/talent), recent traction, current blockers, what 'help' looks like.",
+  "match_weights": {
+    "founder->funder": 1.0,
+    "founder->talent": 0.9,
+    "founder->advisor": 0.7,
+    "founder->founder_cofounder": 1.0
+  }
+}
