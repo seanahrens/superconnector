@@ -96,7 +96,9 @@ fi
 # 5. Apply migrations
 # ──────────────────────────────────────────────────────────────────────────────
 bold "▸ applying D1 migrations (remote)"
-yes | $WRANGLER d1 migrations apply superconnector --remote
+# Single 'y' (not `yes |`, which hits SIGPIPE under `set -o pipefail` when
+# wrangler has nothing to apply and exits before reading any input).
+printf 'y\n' | $WRANGLER d1 migrations apply superconnector --remote
 green "  migrations up to date"
 
 # ──────────────────────────────────────────────────────────────────────────────
