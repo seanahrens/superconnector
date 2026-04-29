@@ -193,7 +193,11 @@ if [ "$deploy_status" -ne 0 ]; then
   warn "  worker deploy failed (exit $deploy_status). See output above."
   exit "$deploy_status"
 fi
-worker_url=$(grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' "$deploy_log" | head -1 || true)
+# Strip ANSI escapes and any \r before grepping, so the captured URL never
+# contains control chars that would break the downstream TOML write.
+worker_url=$(sed 's/\x1b\[[0-9;]*m//g; s/\r//g' "$deploy_log" \
+              | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' \
+              | head -1 || true)
 if [ -z "$worker_url" ]; then
   warn "  could not detect Worker URL from deploy output; using placeholder"
   worker_url="https://REPLACE_WITH_WORKER_URL"
@@ -211,14 +215,19 @@ EOF
 chmod 600 pages/.env
 dim "  wrote pages/.env"
 
-# Update pages/wrangler.toml's [vars] block (idempotent).
-node -e "
+# Update pages/wrangler.toml's [vars] block (idempotent). Pass values via env
+# vars rather than bash-interpolating into the script body — avoids shell
+# escaping pitfalls and lets us strip any stray control chars in JS.
+WORKER_URL="$worker_url" WEB_AUTH_SECRET="$web_auth_secret" node -e "
   const fs = require('fs');
   const p = 'pages/wrangler.toml';
+  const sanitize = (s) => s.replace(/[\x00-\x1f]+/g, '').trim();
+  const url = sanitize(process.env.WORKER_URL);
+  const tok = sanitize(process.env.WEB_AUTH_SECRET);
   let s = fs.readFileSync(p, 'utf8');
   const block = \`[vars]
-PUBLIC_API_BASE = \\\"$worker_url\\\"
-PUBLIC_API_TOKEN = \\\"$web_auth_secret\\\"
+PUBLIC_API_BASE = \"\${url}\"
+PUBLIC_API_TOKEN = \"\${tok}\"
 \`;
   if (s.includes('[vars]')) {
     s = s.replace(/\[vars\][\s\S]*?(?=\n\[|\n*$)/, block);
