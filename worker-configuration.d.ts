@@ -14,4 +14,6 @@ export interface Env {
   RESEND_API_KEY: string;
   EMAIL_TO: string;
   EMAIL_FROM: string;
+  MCP_SECRET: string;
+  WEB_AUTH_SECRET: string;
 }

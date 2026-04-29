@@ -1,7 +1,16 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import type { Env } from '../worker-configuration';
 import { runIngest } from './cron/ingest';
 import { runDailyEmail } from './cron/daily_email';
+import { handleMcp } from './mcp/server';
+import { requireAuth } from './api/auth';
+import people from './api/people';
+import queue from './api/queue';
+import tags from './api/tags';
+import followups from './api/followups';
+import chat from './api/chat';
+import digest from './api/digest';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -16,6 +25,38 @@ app.get('/health', async (c) => {
 });
 
 app.get('/', (c) => c.text('superconnector'));
+
+// MCP endpoint — its own auth header (MCP_SECRET).
+app.all('/mcp', async (c) => handleMcp(c.env, c.req.raw));
+
+// Web API — CORS for the SvelteKit Pages app, then auth-gated.
+app.use(
+  '/api/*',
+  cors({
+    origin: (origin) => origin ?? '*',
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['authorization', 'content-type'],
+  }),
+);
+app.use('/api/*', requireAuth);
+app.route('/api/people', people);
+app.route('/api/queue', queue);
+app.route('/api/tags', tags);
+app.route('/api/followups', followups);
+app.route('/api/chat', chat);
+app.route('/api/digest', digest);
+
+// Manual triggers (auth-gated) for testing the cron paths.
+app.post('/api/run/ingest', requireAuth, async (c) => {
+  const result = await runIngest(c.env);
+  return c.json(result);
+});
+
+app.post('/api/run/daily-email', requireAuth, async (c) => {
+  await runDailyEmail(c.env);
+  return c.json({ ok: true });
+});
 
 async function pingDb(env: Env): Promise<boolean> {
   try {
