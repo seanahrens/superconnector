@@ -3,6 +3,7 @@ node_modules/
 .dev.vars
 .env
 .env.local
+.secrets/
 dist/
 .DS_Store
 *.log
