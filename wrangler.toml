@@ -32,11 +32,10 @@ binding = "AI"
 [[send_email]]
 name = "EMAIL"
 
-# Cron triggers:
-#   */5 * * * *   ingest new Granola notes
-#   0 13 * * *    daily email at 06:00 America/Los_Angeles (13:00 UTC)
-[triggers]
-crons = ["*/5 * * * *", "0 13 * * *"]
+# Cron triggers used to live here; they're now dispatched by the cron-hub
+# Worker (see /cron-hub) so the whole account stays under the free-plan
+# 5-trigger limit. The hub POSTs to /api/run/ingest (every 5 min) and
+# /api/run/daily-email (06:00 PT / 13:00 UTC).
 
 # Observability
 [observability]

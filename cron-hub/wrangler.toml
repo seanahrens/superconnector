@@ -1,0 +1,16 @@
+name = "cron-hub"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Logged on every tick so you can find runs in the dashboard quickly.
+ENVIRONMENT = "production"
+
+# Single trigger for the whole account. Resolution is one minute, which lets
+# us dispatch any reasonable cron expression via the schedule table in code.
+[triggers]
+crons = ["* * * * *"]
+
+[observability]
+enabled = true

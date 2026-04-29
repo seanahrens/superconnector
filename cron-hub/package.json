@@ -1,0 +1,19 @@
+{
+  "name": "cron-hub",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "croner": "^9.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250428.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.86.0"
+  }
+}
