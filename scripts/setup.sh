@@ -205,38 +205,46 @@ fi
 green "  deployed at $worker_url"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8. Pages env (local + deployed)
+# 8. Pages env (local .env for dev + Pages-worker secrets for prod)
 # ──────────────────────────────────────────────────────────────────────────────
-bold "▸ wiring SvelteKit Pages env"
+# SECURITY: do NOT use PUBLIC_* env vars for the API token. Anything PUBLIC_
+# is bundled into client JS and exposed to anyone who loads the page. Use
+# private vars (WEB_AUTH_SECRET, WORKER_API_BASE) consumed only by
+# pages/src/hooks.server.ts and the server-side proxy at
+# pages/src/routes/api/[...path]/+server.ts.
+bold "▸ wiring SvelteKit Pages env (private vars, server-side only)"
 cat > pages/.env <<EOF
-PUBLIC_API_BASE="$worker_url"
-PUBLIC_API_TOKEN="$web_auth_secret"
+WEB_AUTH_SECRET="$web_auth_secret"
+WORKER_API_BASE="$worker_url"
 EOF
 chmod 600 pages/.env
-dim "  wrote pages/.env"
+dim "  wrote pages/.env (used by \`vite dev\` for local development)"
 
-# Update pages/wrangler.toml's [vars] block (idempotent). Pass values via env
-# vars rather than bash-interpolating into the script body — avoids shell
-# escaping pitfalls and lets us strip any stray control chars in JS.
-WORKER_URL="$worker_url" WEB_AUTH_SECRET="$web_auth_secret" node -e "
+# Push the same values as Pages-worker secrets so they're available at runtime
+# in production (read via $env/dynamic/private).
+if printf '%s' "$web_auth_secret" | (cd pages && $WRANGLER secret put WEB_AUTH_SECRET 2>&1) | tail -3 | grep -qi "success\|already"; then
+  dim "  pushed WEB_AUTH_SECRET to pages worker"
+else
+  warn "  pushing WEB_AUTH_SECRET to pages worker may have failed; rerun manually with: cd pages && wrangler secret put WEB_AUTH_SECRET"
+fi
+if printf '%s' "$worker_url" | (cd pages && $WRANGLER secret put WORKER_API_BASE 2>&1) | tail -3 | grep -qi "success\|already"; then
+  dim "  pushed WORKER_API_BASE to pages worker"
+else
+  warn "  pushing WORKER_API_BASE to pages worker may have failed; rerun manually with: cd pages && wrangler secret put WORKER_API_BASE"
+fi
+
+# Strip any leftover legacy PUBLIC_API_* lines from pages/wrangler.toml [vars]
+# block (defensive — older deployments wrote them there).
+node -e "
   const fs = require('fs');
   const p = 'pages/wrangler.toml';
-  const sanitize = (s) => s.replace(/[\x00-\x1f]+/g, '').trim();
-  const url = sanitize(process.env.WORKER_URL);
-  const tok = sanitize(process.env.WEB_AUTH_SECRET);
+  if (!fs.existsSync(p)) process.exit(0);
   let s = fs.readFileSync(p, 'utf8');
-  const block = \`[vars]
-PUBLIC_API_BASE = \"\${url}\"
-PUBLIC_API_TOKEN = \"\${tok}\"
-\`;
-  if (s.includes('[vars]')) {
-    s = s.replace(/\[vars\][\s\S]*?(?=\n\[|\n*$)/, block);
-  } else {
-    s = s.trimEnd() + '\n\n' + block;
-  }
+  s = s.replace(/^\s*PUBLIC_API_(BASE|TOKEN)\s*=.*$\n?/gm, '');
+  s = s.replace(/^\[vars\]\s*\n(?=\s*\n|\s*\[|$)/gm, '');
   fs.writeFileSync(p, s);
 "
-dim "  updated pages/wrangler.toml [vars]"
+dim "  cleaned legacy PUBLIC_API_* entries from pages/wrangler.toml"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 9. Build + deploy Pages

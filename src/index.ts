@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
 import type { Env } from '../worker-configuration';
 import { runIngest } from './cron/ingest';
 import { runDailyEmail } from './cron/daily_email';
@@ -29,16 +28,9 @@ app.get('/', (c) => c.text('superconnector'));
 // MCP endpoint — its own auth header (MCP_SECRET).
 app.all('/mcp', async (c) => handleMcp(c.env, c.req.raw));
 
-// Web API — CORS for the SvelteKit Pages app, then auth-gated.
-app.use(
-  '/api/*',
-  cors({
-    origin: (origin) => origin ?? '*',
-    credentials: true,
-    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['authorization', 'content-type'],
-  }),
-);
+// Web API — auth-gated. The SvelteKit Pages worker proxies all browser traffic
+// server-to-server, so we don't expose any CORS allowance here. Direct browser
+// calls from third-party origins are rejected by the same-origin policy.
 app.use('/api/*', requireAuth);
 app.route('/api/people', people);
 app.route('/api/queue', queue);

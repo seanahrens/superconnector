@@ -31,8 +31,11 @@ export async function handleMcp(env: Env, req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return new Response('method not allowed', { status: 405 });
   }
-  if (!isAuthorized(env, req)) {
-    return new Response('unauthorized', { status: 401 });
+  const authResult = isAuthorized(env, req);
+  if (authResult !== 'ok') {
+    return new Response(authResult === 'misconfigured' ? 'server misconfigured' : 'unauthorized', {
+      status: authResult === 'misconfigured' ? 503 : 401,
+    });
   }
 
   let body: JsonRpcRequest;
@@ -46,11 +49,20 @@ export async function handleMcp(env: Env, req: Request): Promise<Response> {
   return jsonRpcResponse(result);
 }
 
-function isAuthorized(env: Env, req: Request): boolean {
+// Returns 'ok' when the request is authenticated, 'misconfigured' when the
+// secret is missing in a non-dev environment (fail closed), 'forbidden'
+// otherwise. Local dev (ENVIRONMENT === 'development') with no secret is
+// allowed for convenience.
+function isAuthorized(env: Env, req: Request): 'ok' | 'misconfigured' | 'forbidden' {
   const expected = env.MCP_SECRET;
-  if (!expected) return true; // dev mode: no secret configured
+  const isDev = env.ENVIRONMENT === 'development';
+  if (!expected) {
+    if (isDev) return 'ok';
+    console.error('mcp: MCP_SECRET unset in non-dev environment — refusing request');
+    return 'misconfigured';
+  }
   const got = req.headers.get('authorization') ?? '';
-  return got === `Bearer ${expected}`;
+  return got === `Bearer ${expected}` ? 'ok' : 'forbidden';
 }
 
 async function dispatch(env: Env, req: JsonRpcRequest): Promise<JsonRpcResponse> {

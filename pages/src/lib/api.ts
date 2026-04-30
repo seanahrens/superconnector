@@ -1,17 +1,13 @@
-// Tiny fetch wrapper around the Worker API. Reads PUBLIC_API_BASE and
-// PUBLIC_API_TOKEN at runtime via $env/dynamic/public so they don't have to be
-// known at build time.
+// Tiny fetch wrapper around the Worker API. Calls go to the same-origin
+// SvelteKit proxy at /api/*, which attaches the bearer token server-side
+// (see pages/src/routes/api/[...path]/+server.ts). The browser never sees
+// the API token; the page itself is gated by hooks.server.ts (basic auth).
 
-import { env } from '$env/dynamic/public';
-
-const PUBLIC_API_BASE = env.PUBLIC_API_BASE ?? '';
-const PUBLIC_API_TOKEN = env.PUBLIC_API_TOKEN ?? '';
-const BASE = (PUBLIC_API_BASE || 'http://localhost:8787').replace(/\/$/, '');
+const BASE = '';
 
 function headers(json = true): HeadersInit {
   const h: Record<string, string> = {};
   if (json) h['content-type'] = 'application/json';
-  if (PUBLIC_API_TOKEN) h['authorization'] = `Bearer ${PUBLIC_API_TOKEN}`;
   return h;
 }
 
@@ -84,8 +80,8 @@ export const api = {
 
 export type ChatEvent =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; name: string; id: string }
-  | { type: 'tool_result'; name: string; id: string }
+  | { type: 'tool_use'; name: string; id: string; write?: boolean }
+  | { type: 'tool_result'; name: string; id: string; write?: boolean }
   | { type: 'tool_error'; name: string; id: string; error: string }
   | { type: 'done' }
   | { type: 'error'; message: string };

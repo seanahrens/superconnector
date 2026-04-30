@@ -115,7 +115,30 @@ npm run deploy:all
 
 ## Production access control
 
-The Worker API and Pages app both use a bearer token (`WEB_AUTH_SECRET`),
-which is single-user-grade. For real protection put **Cloudflare Access**
-(free tier, ≤50 users) in front of both URLs. That makes the bearer redundant
-but harmless to leave in place.
+Two layers, both required:
+
+1. **Pages worker (`superconnector-pages`)** is gated by HTTP Basic Auth in
+   `pages/src/hooks.server.ts`. The browser will prompt for credentials on
+   first visit. Username can be anything; the password is `WEB_AUTH_SECRET`.
+   If `WEB_AUTH_SECRET` is unset on the Pages worker, every request fails
+   with 503 (fail closed by design).
+2. **Worker API (`superconnector`)** is gated by `Authorization: Bearer
+   <WEB_AUTH_SECRET>`. Browser traffic does NOT call the Worker directly —
+   `pages/src/routes/api/[...path]/+server.ts` is a same-origin server-side
+   proxy that attaches the bearer for you. The token never leaves the Pages
+   worker. MCP clients (claude-desktop) supply the token directly.
+
+Required Pages-worker secrets (set with `npx wrangler secret put` in the
+`pages/` directory):
+
+| secret | value |
+|---|---|
+| `WEB_AUTH_SECRET` | same string as the Worker (also used for basic auth) |
+| `WORKER_API_BASE` | full URL of the Worker, e.g. `https://superconnector.<acct>.workers.dev` |
+
+The old `PUBLIC_API_TOKEN` / `PUBLIC_API_BASE` env vars are gone — they
+leaked the bearer to anyone who loaded the page. If you're running an older
+deployment, rotate `WEB_AUTH_SECRET` after upgrading.
+
+For zero-trust style edge auth, `Cloudflare Access` (free, ≤50 users) can sit
+in front of both Workers. See `docs/TODOS.md` for the dashboard-config steps.

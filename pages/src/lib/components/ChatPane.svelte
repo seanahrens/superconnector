@@ -6,8 +6,10 @@
     scope: 'global' | 'person';
     threadId: string;
     personId?: string;
+    initialInput?: string;
+    onWrite?: (toolName: string) => void | Promise<void>;
   }
-  let { scope, threadId, personId }: Props = $props();
+  let { scope, threadId, personId, initialInput, onWrite }: Props = $props();
 
   let messages = $state<Array<{ role: 'user' | 'assistant'; text: string; toolCalls?: string[] }>>([]);
   let input = $state('');
@@ -17,6 +19,10 @@
   $effect(() => {
     void threadId;
     loadHistory();
+  });
+
+  $effect(() => {
+    if (initialInput && !input) input = initialInput;
   });
 
   async function loadHistory() {
@@ -55,6 +61,9 @@
         } else if (ev.type === 'tool_result') {
           last.toolCalls = [...(last.toolCalls ?? []), `✓ ${ev.name}`];
           messages = [...messages];
+          if (ev.write && onWrite) {
+            try { await onWrite(ev.name); } catch { /* swallow refetch errors */ }
+          }
         } else if (ev.type === 'tool_error') {
           last.toolCalls = [...(last.toolCalls ?? []), `✗ ${ev.name}: ${ev.error}`];
           messages = [...messages];
@@ -77,7 +86,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();
     }

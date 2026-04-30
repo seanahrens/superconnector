@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import type { PersonView, TagRow } from '$lib/types';
+  import type { PersonView, TagRow, ChatThread } from '$lib/types';
   import { ulid } from '$lib/ulid';
   import ChatPane from './ChatPane.svelte';
 
@@ -15,7 +15,27 @@
   let editValue = $state('');
   let newTagName = $state('');
 
-  let chatThreadId = $state(ulid());
+  let chatThreadId = $state<string | null>(null);
+  let lastLoadedPersonId = $state<string | null>(null);
+
+  $effect(() => {
+    const pid = view.person.id;
+    if (pid === lastLoadedPersonId) return;
+    lastLoadedPersonId = pid;
+    chatThreadId = null;
+    void resumeOrCreateThread(pid);
+  });
+
+  async function resumeOrCreateThread(personId: string) {
+    try {
+      const { threads } = await api.get<{ threads: ChatThread[] }>(
+        `/api/chat/threads?scope=person&person_id=${encodeURIComponent(personId)}`,
+      );
+      chatThreadId = threads[0]?.id ?? ulid();
+    } catch {
+      chatThreadId = ulid();
+    }
+  }
 
   async function startEdit(field: 'context' | 'needs' | 'offers') {
     editing = field;
@@ -185,9 +205,21 @@
   </section>
 
   <section class="chat">
-    <h3>Per-person chat</h3>
+    <h3>
+      Per-person chat
+      <button class="btn small" onclick={() => (chatThreadId = ulid())}>new</button>
+    </h3>
     <div class="chatbox">
-      <ChatPane scope="person" personId={view.person.id} threadId={chatThreadId} />
+      {#if chatThreadId}
+        <ChatPane
+          scope="person"
+          personId={view.person.id}
+          threadId={chatThreadId}
+          onWrite={() => onChanged()}
+        />
+      {:else}
+        <div class="muted" style="padding: 12px">Loading chat…</div>
+      {/if}
     </div>
   </section>
 </div>

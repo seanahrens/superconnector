@@ -36,6 +36,22 @@ export const ALL_TOOLS: Tool[] = [
 
 const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
+const WRITE_TOOLS = new Set<string>([
+  'resolve_confirmation',
+  'apply_tag',
+  'remove_tag',
+  'review_tag_proposal',
+  'add_person',
+  'update_person',
+  'dictate',
+  'add_followup',
+  'complete_followup',
+]);
+
+export function isWriteTool(name: string): boolean {
+  return WRITE_TOOLS.has(name);
+}
+
 export function getTool(name: string): Tool | undefined {
   return TOOL_INDEX.get(name);
 }

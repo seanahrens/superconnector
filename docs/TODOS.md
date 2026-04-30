@@ -185,13 +185,57 @@ address) and a subject line built by `subject(now, meetingCount, weekly)` in
 
 ---
 
-## 5. Cloudflare Access in front of Worker + Pages
+## 5. Move web UI to `mapendar.com` custom domain
 
-Single-user bearer token (`WEB_AUTH_SECRET`) is fine but the Pages app shows
-its UI to anyone with the URL (data is still gated, but it's noise). Adding
-Cloudflare Access (free, ≤50 users) puts a login wall at the edge. Manual
-config in the dashboard, no code changes needed; document the steps in
-README once enabled.
+The site is currently served from
+`https://superconnector-pages.<acct>.workers.dev`. Goal: serve it from
+`mapendar.com` (or a subdomain like `app.mapendar.com`) with TLS, behind
+Cloudflare Access for single-sign-on.
+
+**Steps (manual, in Cloudflare dashboard).**
+
+1. Bring `mapendar.com` onto Cloudflare (add site, change registrar
+   nameservers if needed).
+2. Workers & Pages → `superconnector-pages` → Custom Domains → add
+   `mapendar.com` (or `app.mapendar.com`). Cloudflare provisions the cert
+   automatically.
+3. Cloudflare Access (Zero Trust → Access → Applications) → add a Self-
+   Hosted application for `mapendar.com`. Policy: allow only the user's
+   email (single-user). This replaces the basic-auth gate added today —
+   once Access is in front, you can either drop the `hooks.server.ts` gate
+   or leave it as defense in depth (recommended).
+4. Same treatment for the Worker URL `superconnector.<acct>.workers.dev`
+   (or alias it under `api.mapendar.com`) so direct API access also goes
+   through Access. The bearer-token proxy continues to work because Access
+   passes through authenticated requests.
+5. Update README / setup.sh prompts to reference `mapendar.com` once live.
+6. Update the MCP client config in `~/Library/Application Support/Claude/
+   claude_desktop_config.json` to point at the new MCP URL (Access
+   service-token auth or a long-lived bearer is fine for headless MCP).
+
+**Why now.** The previous public-token leak (resolved 2026-04-29) shows
+that "single-user bearer in client JS" is structurally fragile. Edge auth
+via Access removes that whole class of mistakes — even if a future
+refactor accidentally exposes a token, Access still won't let the request
+through.
+
+---
+
+## 5b. Followup security cleanup
+
+In the same security pass that produced 2026-04-29's auth fixes, watch for:
+
+- Pages worker should not log request bodies (currently doesn't, keep it that
+  way).
+- D1 binds use positional placeholders everywhere — keep this enforced; do
+  not let an LLM-driven flow construct SQL by string concatenation. The
+  `query_db_readonly` tool already refuses write keywords.
+- The MCP `query_db_readonly` tool can read everything in D1 by design.
+  That's intentional for the chat-as-CLI flow but means MCP_SECRET must
+  never be checked in.
+- `.secrets/` is gitignored; verify on every commit that no secret strings
+  are staged (`git diff --cached -- ':!.secrets/' | grep -i secret` is a
+  cheap manual check before pushing).
 
 ---
 
@@ -241,6 +285,23 @@ to bootstrap the user's first conversations.
 
 For context — these were resolved in the most recent agent session:
 
+- **Security: Pages worker locked behind HTTP Basic Auth** (`pages/src/hooks.server.ts`)
+  and Worker API token moved to a server-side proxy
+  (`pages/src/routes/api/[...path]/+server.ts`). Browser no longer sees the
+  bearer. CORS allow-all dropped. `requireAuth` and MCP auth now fail
+  closed when their secret is missing in non-dev environments. **Action
+  required by the user** after pulling this change:
+  - `cd pages && npx wrangler secret put WEB_AUTH_SECRET` (paste the same
+    value the Worker uses, from `.secrets/WEB_AUTH_SECRET`).
+  - `cd pages && npx wrangler secret put WORKER_API_BASE` (paste the
+    Worker's deployment URL, e.g.
+    `https://superconnector.<acct>.workers.dev`).
+  - Rotate `WEB_AUTH_SECRET` after the secrets are in place since the old
+    value was publicly exposed in the client bundle.
+- Daily email: `From: SuperConnector <addr>` and an LLM-generated content-led
+  subject (Haiku 4.5, with deterministic fallback).
+- Web chat: Enter sends, Shift-Enter inserts newline (IME-aware).
+- Master chat empty state: example queries + click-to-prefill.
 - Fixed Granola base URL (`api.granola.so` → `public-api.granola.ai`).
 - Fixed Granola transcript array → string folding.
 - Used Granola's own `calendar_event.attendees` instead of relying on ICS only.

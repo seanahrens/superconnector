@@ -8,6 +8,7 @@ import { waysToHelp, type WaysToHelpItem } from '../plays/ways_to_help';
 import { buildWeeklyDigest, type WeeklyDigestSection } from '../plays/weekly_digest';
 import type { PersonRow, FollowupRow } from '../lib/db';
 import { sendEmail, escapeHtml, htmlList } from '../lib/email';
+import { jsonCall, cached, MODEL_HAIKU } from '../lib/anthropic';
 
 interface MeetingBrief {
   personId: string | null;
@@ -33,20 +34,57 @@ export async function runDailyEmail(env: Env, now: Date = new Date()): Promise<v
 
   const html = renderHtml({ now, meetingBriefs, ways, dueToday, weekly });
   const text = renderText({ now, meetingBriefs, ways, dueToday, weekly });
+  const subjectLine = await subjectFor(env, text, meetingBriefs.length, includeWeekly);
 
   await sendEmail(env, {
     to: env.EMAIL_TO,
     from: env.EMAIL_FROM,
-    subject: subject(now, meetingBriefs.length, includeWeekly),
+    fromName: 'SuperConnector',
+    subject: subjectLine,
     html,
     text,
   });
 }
 
-function subject(now: Date, meetingCount: number, weekly: boolean): string {
-  const dateStr = now.toISOString().slice(0, 10);
-  const meetingsPart = meetingCount === 0 ? 'no meetings' : `${meetingCount} meeting${meetingCount === 1 ? '' : 's'}`;
-  return `[superconnector] ${dateStr} — ${meetingsPart}${weekly ? ' + weekly digest' : ''}`;
+const SUBJECT_SYSTEM = `You write subject lines for a daily personal-CRM briefing email sent to one user.
+Rules:
+- Output exactly one short subject line, ≤ 70 characters, no emoji, no quotation marks.
+- Lead with the most important content of the day — the one or two key takeaways
+  (e.g. who to brief, what to send, what's stale). Use the person's name when one
+  meeting clearly dominates.
+- Do NOT include the date, the word "superconnector", or a meeting count.
+- Use sentence case. No trailing period. No leading prefix like "Daily:".
+- If the day is light (no meetings, only routine items), reflect that honestly
+  (e.g. "Quiet day — two stale founder followups due"). Don't invent urgency.
+Return strict JSON: {"subject": "<line>"}`;
+
+async function subjectFor(
+  env: Env,
+  text: string,
+  meetingCount: number,
+  includeWeekly: boolean,
+): Promise<string> {
+  const fallback = (() => {
+    const m = meetingCount === 0 ? 'No meetings' : `${meetingCount} meeting${meetingCount === 1 ? '' : 's'}`;
+    return `Daily — ${m}${includeWeekly ? ' + weekly digest' : ''}`;
+  })();
+
+  if (!env.ANTHROPIC_API_KEY) return fallback;
+
+  try {
+    const result = await jsonCall<{ subject?: string }>(env, {
+      model: MODEL_HAIKU,
+      systemBlocks: [cached(SUBJECT_SYSTEM)],
+      userMessage: `Briefing body:\n\n${text}`,
+      maxTokens: 200,
+    });
+    const raw = (result.subject ?? '').trim();
+    if (!raw) return fallback;
+    return raw.slice(0, 200);
+  } catch (err) {
+    console.error('daily_email: subject generation failed', err);
+    return fallback;
+  }
 }
 
 async function buildTodayMeetings(env: Env, now: Date): Promise<MeetingBrief[]> {

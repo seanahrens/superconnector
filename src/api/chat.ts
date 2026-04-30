@@ -6,7 +6,7 @@ import type { Env } from '../../worker-configuration';
 import type { ChatThreadRow, ChatMessageRow } from '../lib/db';
 import { ulid, nowIso } from '../lib/ulid';
 import { getClient, MODEL_SONNET, cached } from '../lib/anthropic';
-import { anthropicToolDefs, runTool } from '../tools';
+import { anthropicToolDefs, runTool, isWriteTool } from '../tools';
 import { loadPersonView, summarizePersonForPrompt } from '../lib/person_view';
 import type Anthropic from '@anthropic-ai/sdk';
 
@@ -187,7 +187,8 @@ function streamAssistantTurn(
           working = [...working, { role: 'assistant', content: resp.content }];
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           for (const tu of toolUses) {
-            send({ type: 'tool_use', name: tu.name, id: tu.id });
+            const write = isWriteTool(tu.name);
+            send({ type: 'tool_use', name: tu.name, id: tu.id, write });
             try {
               const out = await runTool(env, tu.name, tu.input);
               toolResults.push({
@@ -195,7 +196,7 @@ function streamAssistantTurn(
                 tool_use_id: tu.id,
                 content: JSON.stringify(out),
               });
-              send({ type: 'tool_result', name: tu.name, id: tu.id });
+              send({ type: 'tool_result', name: tu.name, id: tu.id, write });
             } catch (err) {
               toolResults.push({
                 type: 'tool_result',
