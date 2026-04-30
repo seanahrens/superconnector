@@ -7,6 +7,80 @@ relevant.
 
 ---
 
+## A. Smarter ingest-classification algorithm
+
+**Why.** As of 2026-04-30, **0 of ~90 Granola notes have been processed**
+into meetings/people. Every note hits the queue and most stay there. Two
+amplifying problems:
+
+- Granola Personal API only puts the owner in `attendees`, never real
+  counterparts.
+- Proton ICS feed is a rolling window of recent + upcoming events only —
+  zero events from March exist in the feed (verified via
+  `GET /api/run/check-ics` → `by_month`). So all backlog notes get no ICS
+  match either.
+
+Title alone is high-signal. Sample titles currently sitting in the queue:
+
+> Aaron Hamlin Call · Ian at IPTS · Rihki · Hugo @ Catalyze Impact ·
+> Gabriel Sherman · Justin Shenk - Civic Reliability
+
+These obviously resolve to 1:1s with a named counterpart, but the current
+classifier in `src/lib/classify.ts` is conservative (rules require
+"1:1 with X" / "Coffee w/ X" / "X / Y" patterns) and the LLM call has no
+transcript to lean on.
+
+**Proposal — three-signal vote, no LLM required for the cheap cases.**
+
+For each note:
+
+1. **Solo / non-meeting filter** (already partly there via `isSoloNote`):
+   if title is short generic ("Dr visit", "Busy", "Lunch", "Workout")
+   AND no calendar_event AND transcript shows only one speaker label →
+   skip silently.
+
+2. **Title-pattern counterpart extraction.** A small set of regexes,
+   then fall back to a single Haiku call. Order:
+   - `^([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s*(Call|Chat|Meeting|/.+|–.+|-.+|<>.+)?$`
+     → counterpart = group 1 (e.g. "Aaron Hamlin Call", "Gabriel Sherman").
+   - `^([^@]+?)\s@\s.+$` → counterpart = group 1 (e.g. "Hugo @ Catalyze Impact").
+   - `^([^/]+?)\s*[/<>]+\s*([^/]+)$` → pick the side that isn't the user.
+   - `^Coffee w(?:ith)?\s+(.+)$`, `^1:1 with (.+)$`, etc.
+   - Fallback: Haiku with the title only — extracts `{kind, counterpart_name}`.
+
+3. **Transcript speaker-count signal.** Count distinct
+   `transcript[i].speaker.diarization_label` values across turns. Two
+   distinct speakers → strong 1:1 signal. Three or more → group signal.
+   Zero/one → no signal.
+
+4. **ICS attendees** when present (existing path, retained).
+
+**Decision matrix.** Confidence-vote: each signal that fires votes for a
+classification. Auto-process when:
+- 2+ signals vote 1:1 AND signals 2 and 3 don't disagree AND a counterpart
+  name is extracted with confidence ≥ 0.7.
+- 2+ signals vote group → skip with `classification = 'group'` (no people
+  graph entry; record in an `ingest_log` table — see TODO 9).
+
+Otherwise → queue (current behavior). This should auto-process the
+clear-cut majority while keeping the queue for genuine ambiguity.
+
+**Migration safety.** Don't reprocess existing pending queue items
+automatically; the user is reviewing them by hand. New notes from the
+next ingest tick onward use the new algorithm. Add an admin endpoint
+`POST /api/admin/reclassify-queue` to opt-in re-run on the existing pending
+items if desired.
+
+**Touch points.**
+- `src/lib/classify.ts` — extend with `classifyByTitle`,
+  `classifyBySpeakers`, and a vote function.
+- `src/cron/ingest.ts` — call the vote before the LLM fallback; if the
+  vote yields a confident 1:1, run `materializeFromGranolaNote` directly
+  with the extracted counterpart.
+- `src/lib/queue_resolve.ts` — already has the materialization helper; reuse.
+
+---
+
 ## 1. Re-pull Granola notes and reprocess on title/content edits
 
 **Why.** The user is going back through Granola to improve note titles so
@@ -278,6 +352,127 @@ After cleanup the people list and queue can be empty. Both screens already
 handle this, but the master-chat empty state could suggest example queries
 ("who's a good cofounder for…?", "show me funders interested in evals", etc.)
 to bootstrap the user's first conversations.
+
+---
+
+## B. "Add person" via freeform chat dictation
+
+**Why.** Right now creating a new person requires resolving a queue item
+(or directly hitting the API). Every new contact should be an "open chat,
+type what you know, hit send" flow, since the per-person chat already
+calls `dictate` to extract structured updates.
+
+**Goal.**
+
+- Add a "+" button to the people list (top of `/people`).
+- Tapping it opens an empty per-person chat — but the person doesn't
+  exist yet. The chat thread is scoped to a *placeholder* person that
+  becomes real as soon as the first dictation extracts enough info
+  (name, or name+email).
+- The per-person chat thread (the one already wired in `PersonProfile`)
+  *is* the input here — single source of truth for both "tell me about
+  this person" and "create this person from scratch". When the chat
+  resolves a name, redirect to `/people/<id>`.
+
+**Touch points.**
+- `pages/src/routes/people/+page.svelte` — add a "+" button (use
+  `Icon.svelte` "plus") next to the search field.
+- `pages/src/routes/people/new/+page.svelte` — new route hosting the
+  chat in placeholder mode. Probably reuses `ChatPane` with a special
+  scope `new-person` that the worker treats as "call dictate on the
+  next message; create + resolve to the new person; then the thread
+  moves with them".
+- `src/api/chat.ts` — add scope handling for `new-person`. After the
+  first dictate resolves a person, update the thread row's `person_id`
+  and `scope='person'`, then surface the new id to the client so the
+  page can redirect.
+
+---
+
+## C. People list — sort dropdown, icons, and overflow control
+
+Three small fixes on `pages/src/routes/people/+page.svelte`:
+
+1. **Drop the "(recency × frequency × custom)" parenthetical** in the
+   "magical" option label. Just `Magical`. Either trust the name or
+   move the formula to a tooltip on a `?` icon next to the dropdown.
+
+2. **Icons next to each sort option.** Use `Icon.svelte`:
+   - Magical → `sparkles` (add to icon set)
+   - Most recent → `clock`
+   - Most frequent → `bar-chart-2`
+   - My custom order → `move-vertical` (or `grip-vertical`)
+   Native `<select>` doesn't render icons in options on most browsers, so
+   the cleanest path is a small custom dropdown component (button shows
+   icon + label; menu lists options with icons). Keep the keyboard
+   behavior of a `<select>` (arrow keys, enter, escape).
+
+3. **Tags + roles overflow.** When `allTags` is large, the chip list
+   currently runs unbounded down the sidebar and pushes the people list
+   off-screen. Cap the visible chips (e.g. 12) with a "show all" toggle,
+   OR put the whole filter region in a collapsible `<details>` so the
+   default state is just the search bar + sort. Same for role chips
+   when more roles get introduced. Sidebar should always show the
+   people list above the fold.
+
+---
+
+## D. Search field icon
+
+`pages/src/routes/people/+page.svelte` has a `<input type="search">` with no
+visual affordance. Add the `search` icon (already in `Icon.svelte`) inside
+the input — `position: relative` wrapper, `position: absolute` icon at left,
+`padding-left: 32px` on the input.
+
+---
+
+## E. Master-chat example prompts: auto-send, don't fill-and-wait
+
+Currently clicking an example in the master-chat empty state seeds the
+textarea and waits for the user to press send. The user feedback was: just
+*send* it. ChatPane already has `send()`; the example click should call
+it after setting input.
+
+**Implementation.** Pass an `autoSend` flag alongside `initialInput`:
+
+- `MasterChatDrawer.startWith(text)` sets `seed = text` AND
+  `seedAutoSend = true`.
+- `ChatPane` props: `initialInput?: string`, `autoSend?: boolean`. When
+  `lastSeed` changes and `autoSend` is true, set input then call `send()`.
+
+Keep the current "set the input and wait" path available too in case
+some future surface wants the prefill-only behavior.
+
+---
+
+## F. Tags page: clarify what "proposals" are and what the left pane is for
+
+Right now `/tags` shows existing tags on the left (un-clickable) and tag
+proposals on the right with no explanation of either. UX issues:
+
+- **Existing-tags column has no purpose.** Tags aren't clickable, don't
+  filter anything, and the page doesn't let you create/rename/delete a
+  tag. Either make them clickable (e.g. clicking a tag jumps to
+  `/people?tags=<name>`) or remove the column.
+- **"Proposals" needs a one-liner.** During ingest, the extraction LLM
+  suggests new tags it thinks should exist (e.g. "trajectory/raising_seed"
+  emerging from a meeting). Until you accept one, it doesn't enter the
+  canonical tag set. Add a short header explaining this.
+- **Make the left column actionable** by linking each tag name to the
+  filtered people view, and add a "merge" / "rename" / "delete" affordance
+  per row. Then the page becomes "your tag taxonomy" rather than two
+  half-loose lists.
+
+---
+
+## G. Ingest disposition log
+
+To answer "do you have all the notes" the system needs an `ingest_log`
+table that records every note id seen and what we did with it
+(`processed`, `skipped_solo`, `skipped_group`, `queued`, `errored`,
+`reprocessed`). Adds a fourth tab "Skipped" to `/notes` and lets the user
+sanity-check that nothing is being silently dropped. Light schema; small
+migration.
 
 ---
 
