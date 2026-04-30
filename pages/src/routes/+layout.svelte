@@ -2,6 +2,7 @@
   import '../app.css';
   import { page } from '$app/stores';
   import MasterChatDrawer from '$components/MasterChatDrawer.svelte';
+  import Icon from '$components/Icon.svelte';
   import { onMount } from 'svelte';
 
   let chatOpen = $state(false);
@@ -20,11 +21,15 @@
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const navItems = [
-    { href: '/people', label: 'People' },
-    { href: '/notes', label: 'Notes' },
-    { href: '/tags', label: 'Tags' },
-    { href: '/followups', label: 'Followups' },
+  const navItems: Array<{
+    href: string;
+    label: string;
+    icon: 'users' | 'file-text' | 'tag' | 'list-todo';
+  }> = [
+    { href: '/people', label: 'People', icon: 'users' },
+    { href: '/notes', label: 'Notes', icon: 'file-text' },
+    { href: '/tags', label: 'Tags', icon: 'tag' },
+    { href: '/followups', label: 'Followups', icon: 'list-todo' },
   ];
 </script>
 
@@ -36,12 +41,21 @@
     </a>
     <nav class="nav" aria-label="Primary">
       {#each navItems as item}
-        <a href={item.href} class:active={$page.url.pathname.startsWith(item.href)}>{item.label}</a>
+        <a
+          href={item.href}
+          class:active={$page.url.pathname.startsWith(item.href)}
+          aria-label={item.label}
+          title={item.label}
+        >
+          <Icon name={item.icon} size={20} />
+          <span class="nav-label">{item.label}</span>
+        </a>
       {/each}
     </nav>
     <span class="spacer"></span>
     <button class="btn chat-btn" onclick={toggleChat} title="Master chat (⌘K)" aria-label="Open master chat">
-      <span>chat</span>
+      <Icon name="message-square" size={16} />
+      <span class="chat-label">chat</span>
       <span class="kbd">⌘K</span>
     </button>
   </header>
@@ -64,7 +78,9 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 16px;
+    /* Pad against iOS notch / left-edge swipe-back gesture zone so the
+       brand and first nav item don't sit under the gesture detector. */
+    padding: 8px 16px 8px max(16px, env(safe-area-inset-left, 0px));
     border-bottom: 1px solid var(--border);
     background: white;
     /* Don't let nav links push the chat button off the page. */
@@ -93,6 +109,9 @@
     border-radius: 6px;
     white-space: nowrap;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
   }
   .nav a:hover { background: var(--hover); text-decoration: none; }
   .nav a.active { color: var(--fg); background: var(--hover); }
@@ -117,8 +136,10 @@
 
   @media (max-width: 720px) {
     .topbar {
-      gap: 8px;
-      padding: 6px 12px;
+      gap: 6px;
+      /* Same intent as the desktop padding — keep tappable nav items out
+         of iOS's left-edge swipe zone (16px on the left at minimum). */
+      padding: 6px 10px 6px max(16px, env(safe-area-inset-left, 0px));
     }
     .brand-full { display: none; }
     .brand-mark {
@@ -133,10 +154,30 @@
       font-size: 14px;
       font-weight: 600;
     }
-    .nav { flex: 1; }
-    .nav a { padding: 8px 10px; }
-    /* The keyboard hint isn't useful on touch. */
+    .nav { flex: 1; gap: 0; justify-content: space-around; }
+    .nav a {
+      padding: 8px 10px;
+      /* Icon-only on mobile — hide the text labels but keep them in the
+         DOM for screen readers via aria-label on the link. */
+    }
+    .nav-label { display: none; }
+    .nav a.active {
+      background: transparent;
+      color: var(--accent);
+      position: relative;
+    }
+    .nav a.active::after {
+      content: '';
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: -7px;
+      height: 2px;
+      background: var(--accent);
+      border-radius: 2px;
+    }
+    .chat-label { display: none; }
     .kbd { display: none; }
-    .chat-btn { padding: 8px 12px; }
+    .chat-btn { padding: 8px 10px; }
   }
 </style>

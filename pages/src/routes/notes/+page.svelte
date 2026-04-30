@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import type { ConfirmationItem } from '$lib/types';
+  import Icon from '$components/Icon.svelte';
 
   // Payload shapes the backend writes for each queue kind.
   interface NoteForQueue {
@@ -235,7 +236,9 @@
 
   <section class="content">
     {#if selected}
-      <button class="mobile-back btn small" onclick={() => (selected = null)}>← back</button>
+      <button class="mobile-back btn small" onclick={() => (selected = null)}>
+        <Icon name="arrow-left" size={14} /> back
+      </button>
     {/if}
     {#if tab === 'processed'}
       <div class="muted">Processed notes have been turned into people + meetings. Tap a row to open the person.</div>

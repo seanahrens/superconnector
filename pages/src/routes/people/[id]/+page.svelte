@@ -5,6 +5,7 @@
   import { goto } from '$app/navigation';
   import PeopleList from '$components/PeopleList.svelte';
   import PersonProfile from '$components/PersonProfile.svelte';
+  import Icon from '$components/Icon.svelte';
 
   let view = $state<PersonView | null>(null);
   let items = $state<PersonListItem[]>([]);
@@ -66,7 +67,9 @@
     />
   </aside>
   <section class="content">
-    <a href="/people" class="mobile-back btn small">← all people</a>
+    <a href="/people" class="mobile-back btn small">
+      <Icon name="arrow-left" size={14} /> all people
+    </a>
     {#if loadError}
       <div class="error">
         <strong>Failed to load.</strong>

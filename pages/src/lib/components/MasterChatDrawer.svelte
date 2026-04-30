@@ -3,6 +3,7 @@
   import type { ChatThread } from '$lib/types';
   import { ulid } from '$lib/ulid';
   import ChatPane from './ChatPane.svelte';
+  import Icon from './Icon.svelte';
 
   let { open = $bindable(false) }: { open: boolean } = $props();
   let threadId = $state<string | null>(null);
@@ -61,10 +62,18 @@
       <strong>Master chat</strong>
       <span class="spacer"></span>
       {#if threadId}
-        <button class="btn" onclick={backToList}>threads</button>
+        <button class="btn" onclick={backToList} aria-label="Back to thread list">
+          <Icon name="arrow-left" size={14} />
+          <span class="btn-text">threads</span>
+        </button>
       {/if}
-      <button class="btn" onclick={newThread}>new</button>
-      <button class="btn" onclick={() => (open = false)}>×</button>
+      <button class="btn" onclick={newThread} aria-label="New thread">
+        <Icon name="plus" size={14} />
+        <span class="btn-text">new</span>
+      </button>
+      <button class="btn icon-only" onclick={() => (open = false)} aria-label="Close">
+        <Icon name="x" size={16} />
+      </button>
     </div>
     <div class="body">
       {#if threadId}
