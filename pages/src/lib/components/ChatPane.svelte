@@ -113,6 +113,25 @@
       send();
     }
   }
+
+  // Autoresize: textarea starts at one line, grows up to MAX_LINES
+  // (~3 lines), then becomes scrollable. Recompute on input + when input
+  // is reset programmatically (after send).
+  let textareaEl: HTMLTextAreaElement | undefined = $state();
+  const MAX_LINES = 3;
+  function autosize() {
+    if (!textareaEl) return;
+    textareaEl.style.height = 'auto';
+    const lineHeight = parseFloat(getComputedStyle(textareaEl).lineHeight || '20');
+    const padTop = parseFloat(getComputedStyle(textareaEl).paddingTop || '0');
+    const padBot = parseFloat(getComputedStyle(textareaEl).paddingBottom || '0');
+    const maxH = Math.round(lineHeight * MAX_LINES + padTop + padBot);
+    const scrollH = textareaEl.scrollHeight;
+    const next = Math.min(scrollH, maxH);
+    textareaEl.style.height = `${next}px`;
+    textareaEl.style.overflowY = scrollH > maxH ? 'auto' : 'hidden';
+  }
+  $effect(() => { void input; autosize(); });
 </script>
 
 <div class="pane">
@@ -138,9 +157,11 @@
   <div class="composer">
     <textarea
       bind:value={input}
+      bind:this={textareaEl}
       onkeydown={onKey}
+      oninput={autosize}
       placeholder={scope === 'person' ? 'Update or ask about this person…' : 'Ask anything…'}
-      rows="3"
+      rows="1"
       disabled={sending}
     ></textarea>
     <button class="btn btn-primary" onclick={send} disabled={sending || !input.trim()}>

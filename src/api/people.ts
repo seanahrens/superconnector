@@ -202,6 +202,10 @@ app.get('/:id/merge-candidates', async (c) => {
     last_met_date: s.person.last_met_date,
     meeting_count: s.person.meeting_count,
     aliases: parseJsonArray(s.person.aliases),
+    roles: parseJsonArray(s.person.roles),
+    context: s.person.context,
+    needs: s.person.needs,
+    offers: s.person.offers,
     score: s.score,
     reasons: s.reasons,
   }));

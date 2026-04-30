@@ -10,6 +10,10 @@
     last_met_date: string | null;
     meeting_count: number;
     aliases: string[];
+    roles?: string[];
+    context?: string | null;
+    needs?: string | null;
+    offers?: string | null;
     score: number;
     reasons: string[];
   }
@@ -21,6 +25,10 @@
     last_met_date: string | null;
     meeting_count: number;
     aliases?: string[];
+    roles?: string[];
+    context?: string | null;
+    needs?: string | null;
+    offers?: string | null;
   }
 
   interface Props {
@@ -154,16 +162,62 @@
           <div class="diff">
             <div class="col">
               <div class="col-label">Keep (this person)</div>
-              <div><strong>{keepPerson.display_name ?? '(unnamed)'}</strong></div>
+              <div class="card-name"><strong>{keepPerson.display_name ?? '(unnamed)'}</strong></div>
               <div class="muted small">{keepPerson.primary_email ?? '—'}</div>
               <div class="muted small">last met {keepPerson.last_met_date ?? '—'} · {keepPerson.meeting_count} meeting{keepPerson.meeting_count === 1 ? '' : 's'}</div>
+              {#if keepPerson.roles?.length}
+                <div class="chips">
+                  {#each keepPerson.roles as r}<span class="chip role">{r}</span>{/each}
+                </div>
+              {/if}
+              {#if keepPerson.context}
+                <div class="field">
+                  <div class="field-label">Context</div>
+                  <p class="prose">{keepPerson.context}</p>
+                </div>
+              {/if}
+              {#if keepPerson.needs}
+                <div class="field">
+                  <div class="field-label">Needs</div>
+                  <p class="prose">{keepPerson.needs}</p>
+                </div>
+              {/if}
+              {#if keepPerson.offers}
+                <div class="field">
+                  <div class="field-label">Offers</div>
+                  <p class="prose">{keepPerson.offers}</p>
+                </div>
+              {/if}
             </div>
             <div class="arrow" aria-hidden="true">←</div>
             <div class="col donor">
               <div class="col-label">Donor (will be deleted)</div>
-              <div><strong>{selected.display_name ?? '(unnamed)'}</strong></div>
+              <div class="card-name"><strong>{selected.display_name ?? '(unnamed)'}</strong></div>
               <div class="muted small">{selected.primary_email ?? '—'}</div>
               <div class="muted small">last met {selected.last_met_date ?? '—'} · {selected.meeting_count} meeting{selected.meeting_count === 1 ? '' : 's'}</div>
+              {#if (selected as MergeCandidate).roles?.length}
+                <div class="chips">
+                  {#each (selected as MergeCandidate).roles ?? [] as r}<span class="chip role">{r}</span>{/each}
+                </div>
+              {/if}
+              {#if (selected as MergeCandidate).context}
+                <div class="field">
+                  <div class="field-label">Context</div>
+                  <p class="prose">{(selected as MergeCandidate).context}</p>
+                </div>
+              {/if}
+              {#if (selected as MergeCandidate).needs}
+                <div class="field">
+                  <div class="field-label">Needs</div>
+                  <p class="prose">{(selected as MergeCandidate).needs}</p>
+                </div>
+              {/if}
+              {#if (selected as MergeCandidate).offers}
+                <div class="field">
+                  <div class="field-label">Offers</div>
+                  <p class="prose">{(selected as MergeCandidate).offers}</p>
+                </div>
+              {/if}
             </div>
           </div>
           <p class="muted small note">
@@ -260,9 +314,29 @@
     gap: 12px;
     align-items: stretch;
   }
-  .col { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: white; }
-  .col.donor { background: #fff7f4; }
-  .col-label { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .col {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .col.donor { background: #fff7f4; border-color: rgba(185, 28, 28, 0.15); }
+  .col-label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.05em; font-weight: 600; }
+  .card-name { font-size: 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .chip.role {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .field { margin-top: 4px; }
+  .field-label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.04em; margin-bottom: 2px; }
+  .prose { white-space: pre-wrap; margin: 0; line-height: 1.45; font-size: 13px; }
   .arrow { display: flex; align-items: center; justify-content: center; color: var(--muted); }
   .note { margin-top: 8px; }
   .error {

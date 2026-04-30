@@ -50,23 +50,62 @@
     updated_at: string;
   }
 
-  type Tab = 'pending' | 'processed' | 'dismissed' | 'skipped';
+  // Tabs follow the lifecycle of a note:
+  //   review  → needs your decision (was "Needs review")
+  //   skipped → auto-filtered (solo / group)
+  //   processed → resolved into a person
+  //   dismissed → you said no
+  type Tab = 'review' | 'skipped' | 'processed' | 'dismissed';
 
-  let tab = $state<Tab>('pending');
+  const TABS: Array<{
+    key: Tab;
+    label: string;
+    icon: 'list-todo' | 'x' | 'check' | 'trash';
+  }> = [
+    { key: 'review', label: 'Review', icon: 'list-todo' },
+    { key: 'skipped', label: 'Skipped', icon: 'x' },
+    { key: 'processed', label: 'Processed', icon: 'check' },
+    { key: 'dismissed', label: 'Dismissed', icon: 'trash' },
+  ];
+
+  let tab = $state<Tab>('review');
   let pending = $state<ConfirmationItem[]>([]);
   let dismissed = $state<ConfirmationItem[]>([]);
   let processed = $state<ProcessedItem[]>([]);
-  // Initialize counts as '—' so the tab buttons render at their final width
-  // on first paint instead of going `0` → `16` and shifting layout.
-  let counts = $state<{ pending: number | string; processed: number | string; dismissed: number | string; skipped: number | string }>({
-    pending: '—',
+  let skipped = $state<SkippedItem[]>([]);
+  let counts = $state<{ review: number | string; processed: number | string; dismissed: number | string; skipped: number | string }>({
+    review: '—',
     processed: '—',
     dismissed: '—',
     skipped: '—',
   });
-  let skipped = $state<SkippedItem[]>([]);
   let loading = $state(true);
-  let selected = $state<ConfirmationItem | null>(null);
+
+  // Unified selection — a view-model independent of which tab spawned it.
+  type Tone = 'review' | 'skipped' | 'processed' | 'dismissed';
+  interface NoteVM {
+    key: string;                                  // unique row id for the list active state
+    noteId: string | null;
+    title: string;
+    ownerName?: string | null;
+    createdAt?: string | null;
+    webUrl?: string | null;
+    statusLabel: string;
+    tone: Tone;
+    // Review-only context:
+    queueItem?: ConfirmationItem;
+    // Processed:
+    personId?: string | null;
+    personName?: string | null;
+    classification?: string | null;
+    // Skipped:
+    skipReason?: string | null;
+    // Optional cached body:
+    summary?: string | null;
+    transcript?: string | null;
+  }
+  let selected = $state<NoteVM | null>(null);
+
   let counterpartName = $state('');
   let counterpartEmail = $state('');
   let resolveError = $state<string | null>(null);
@@ -79,7 +118,6 @@
       api.get<{ items: ProcessedItem[] }>('/api/queue/processed?limit=200'),
       api.get<{ items: SkippedItem[] }>('/api/queue/skipped?limit=200'),
     ]);
-    // Sort queue lists by meeting (note creation) date, newest first.
     const byMeetingDateDesc = (a: ConfirmationItem, b: ConfirmationItem) =>
       meetingDateOf(b).localeCompare(meetingDateOf(a));
     pending = [...p.items].sort(byMeetingDateDesc);
@@ -87,28 +125,24 @@
     processed = pr.items;
     skipped = sk.items;
     counts = {
-      pending: p.items.length,
+      review: p.items.length,
       processed: pr.items.length,
       dismissed: d.items.length,
       skipped: sk.items.length,
     };
     if (selected) {
-      const list = tab === 'pending' ? pending : tab === 'dismissed' ? dismissed : [];
-      selected = list.find((i) => i.id === selected!.id) ?? list[0] ?? null;
-    } else if (tab === 'pending') {
-      selected = pending[0] ?? null;
-    } else if (tab === 'dismissed') {
-      selected = dismissed[0] ?? null;
+      // Try to keep the same row selected after a refresh.
+      const list = currentVMs();
+      selected = list.find((v) => v.key === selected!.key) ?? list[0] ?? null;
+    } else {
+      const list = currentVMs();
+      selected = list[0] ?? null;
     }
   }
 
   async function load() {
     loading = true;
-    try {
-      await loadAll();
-    } finally {
-      loading = false;
-    }
+    try { await loadAll(); } finally { loading = false; }
   }
   $effect(() => { load(); });
 
@@ -117,17 +151,69 @@
     counterpartName = '';
     counterpartEmail = '';
     resolveError = null;
-    if (tab === 'pending') selected = pending[0] ?? null;
-    else if (tab === 'dismissed') selected = dismissed[0] ?? null;
-    else selected = null;
+    selected = currentVMs()[0] ?? null;
   });
 
+  function currentVMs(): NoteVM[] {
+    if (tab === 'review') return pending.map(toVMQueue);
+    if (tab === 'dismissed') return dismissed.map(toVMQueue);
+    if (tab === 'processed') return processed.map(toVMProcessed);
+    return skipped.map(toVMSkipped);
+  }
+
+  function toVMQueue(item: ConfirmationItem): NoteVM {
+    const p = item.payload as MeetingClassificationPayload | PersonResolutionPayload;
+    const note = p.note;
+    const status = item.status as 'pending' | 'dismissed' | 'resolved';
+    const tone: Tone = status === 'pending' ? 'review' : status === 'resolved' ? 'processed' : 'dismissed';
+    return {
+      key: item.id,
+      noteId: note?.id ?? null,
+      title: note?.title?.trim() || item.kind.replace(/_/g, ' '),
+      ownerName: note?.owner?.name ?? null,
+      createdAt: note?.created_at ?? item.created_at,
+      webUrl: note?.web_url ?? null,
+      statusLabel: tone === 'review' ? 'Needs your review' : tone === 'dismissed' ? 'Dismissed' : 'Resolved',
+      tone,
+      queueItem: item,
+      personId: p.resolved_person_id ?? null,
+      summary: note?.summary ?? null,
+      transcript: note?.transcript_preview ?? null,
+    };
+  }
+  function toVMProcessed(p: ProcessedItem): NoteVM {
+    return {
+      key: `m:${p.meeting_id}`,
+      noteId: p.note_id ?? null,
+      title: p.display_name ?? p.event_title ?? '(unnamed)',
+      createdAt: p.recorded_at,
+      statusLabel: 'Processed',
+      tone: 'processed',
+      personId: p.person_id ?? null,
+      personName: p.display_name ?? null,
+      classification: p.classification,
+      summary: p.summary,
+    };
+  }
+  function toVMSkipped(s: SkippedItem): NoteVM {
+    const reasonPretty = s.disposition.replace(/_/g, ' ');
+    return {
+      key: `s:${s.note_id}`,
+      noteId: s.note_id,
+      title: s.note_title ?? '(untitled)',
+      createdAt: s.note_created_at ?? s.updated_at,
+      statusLabel: `Skipped — ${reasonPretty}`,
+      tone: 'skipped',
+      skipReason: s.reason ?? reasonPretty,
+    };
+  }
+
   async function resolve(decision: 'resolve' | 'dismiss', extra: Record<string, unknown> = {}) {
-    if (!selected) return;
+    if (!selected || !selected.queueItem) return;
     resolving = true;
     resolveError = null;
     try {
-      await api.post(`/api/queue/${selected.id}/resolve`, { decision, ...extra });
+      await api.post(`/api/queue/${selected.queueItem.id}/resolve`, { decision, ...extra });
       selected = null;
       counterpartName = '';
       counterpartEmail = '';
@@ -155,24 +241,10 @@
     await load();
   }
 
-  function payload<T>(item: ConfirmationItem): T {
-    return item.payload as T;
-  }
-
-  function listLabel(item: ConfirmationItem): string {
-    const p = item.payload as { note?: { title?: string | null } } | undefined;
-    const t = p?.note?.title?.trim();
-    if (t) return t;
-    return item.kind.replace(/_/g, ' ');
-  }
-
-  // Date of the actual meeting, not when ingest classified it. Falls back
-  // to the queue row's created_at if the note timestamp is missing.
   function meetingDateOf(item: ConfirmationItem): string {
     const p = item.payload as { note?: { created_at?: string } } | undefined;
     return p?.note?.created_at ?? item.created_at;
   }
-
   function fmtDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
@@ -181,106 +253,71 @@
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
   }
+
+  // Convenience accessors derived from `selected`.
+  const isReviewAction = $derived(
+    selected?.tone === 'review' &&
+    !!selected?.queueItem &&
+    (selected.queueItem.kind === 'meeting_classification' ||
+     selected.queueItem.kind === 'person_resolution'),
+  );
 </script>
 
 <div class="layout" data-pane={selected ? 'detail' : 'list'}>
   <aside class="sidebar">
-    <div class="tabs">
-      <button class="tab" class:active={tab === 'pending'} onclick={() => (tab = 'pending')}>
-        Needs review <span class="count">{counts.pending}</span>
-      </button>
-      <button class="tab" class:active={tab === 'processed'} onclick={() => (tab = 'processed')}>
-        Processed <span class="count">{counts.processed}</span>
-      </button>
-      <button class="tab" class:active={tab === 'dismissed'} onclick={() => (tab = 'dismissed')}>
-        Dismissed <span class="count">{counts.dismissed}</span>
-      </button>
-      <button class="tab" class:active={tab === 'skipped'} onclick={() => (tab = 'skipped')}>
-        Skipped <span class="count">{counts.skipped}</span>
-      </button>
+    <div class="tabs" role="tablist" aria-label="Notes lifecycle">
+      {#each TABS as t}
+        <button
+          class="tab"
+          class:active={tab === t.key}
+          role="tab"
+          aria-selected={tab === t.key}
+          aria-controls="notes-list"
+          onclick={() => (tab = t.key)}
+          title={t.label}
+        >
+          <Icon name={t.icon} size={14} />
+          <span class="tab-label">{t.label}</span>
+          <span class="count">{counts[t.key]}</span>
+        </button>
+      {/each}
     </div>
 
     {#if loading}
       <div class="muted small" style="padding: 8px">loading…</div>
-    {:else if tab === 'pending'}
-      <div class="header">
-        <span class="muted small">{pending.length} pending</span>
-        {#if pending.length > 0}
-          <button class="link small" onclick={clearAll}>clear all</button>
-        {/if}
-      </div>
-      {#if pending.length === 0}
-        <div class="muted small" style="padding: 8px">queue is empty</div>
-      {:else}
-        <ul class="list">
-          {#each pending as item (item.id)}
-            <li>
-              <button
-                class:active={selected?.id === item.id}
-                onclick={() => (selected = item)}
-              >
-                <div class="title">{listLabel(item)}</div>
-                <div class="muted small">
-                  <span class="kind">{item.kind.replace(/_/g, ' ')}</span>
-                  <span> · {fmtDate(meetingDateOf(item))}</span>
-                </div>
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    {:else if tab === 'skipped'}
-      {#if skipped.length === 0}
-        <div class="muted small" style="padding: 8px">no skipped notes</div>
-      {:else}
-        <ul class="list">
-          {#each skipped as s (s.note_id)}
-            <li>
-              <div class="processed-row">
-                <div class="title">{s.note_title ?? '(untitled)'}</div>
-                <div class="muted small">
-                  <span class="kind">{s.disposition.replace('_', ' ')}</span>
-                  <span> · {fmtDate(s.note_created_at ?? s.updated_at)}</span>
-                  {#if s.reason} · <span>{s.reason}</span>{/if}
-                </div>
-              </div>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    {:else if tab === 'processed'}
-      {#if processed.length === 0}
-        <div class="muted small" style="padding: 8px">no notes processed yet</div>
-      {:else}
-        <ul class="list">
-          {#each processed as p (p.meeting_id)}
-            <li>
-              <a href={p.person_id ? `/people/${p.person_id}` : '#'} class="processed-row">
-                <div class="title">{p.display_name ?? p.event_title ?? '(unnamed)'}</div>
-                <div class="muted small">
-                  <span>{p.classification}</span>
-                  <span> · {fmtDate(p.recorded_at)}</span>
-                </div>
-              </a>
-            </li>
-          {/each}
-        </ul>
-      {/if}
     {:else}
-      {#if dismissed.length === 0}
-        <div class="muted small" style="padding: 8px">none dismissed</div>
+      {@const vms = currentVMs()}
+      {#if tab === 'review' && vms.length > 0}
+        <div class="header">
+          <span class="muted small">{vms.length} pending</span>
+          <button class="link small" onclick={clearAll}>clear all</button>
+        </div>
+      {/if}
+      {#if vms.length === 0}
+        <div class="muted small" style="padding: 8px">
+          {#if tab === 'review'}queue is empty{:else if tab === 'skipped'}no skipped notes{:else if tab === 'processed'}no notes processed yet{:else}none dismissed{/if}
+        </div>
       {:else}
-        <ul class="list">
-          {#each dismissed as item (item.id)}
+        <ul class="list" id="notes-list">
+          {#each vms as v (v.key)}
             <li>
               <button
-                class:active={selected?.id === item.id}
-                onclick={() => (selected = item)}
+                class:active={selected?.key === v.key}
+                onclick={() => (selected = v)}
               >
-                <div class="title">{listLabel(item)}</div>
-                <div class="muted small">
-                  <span class="kind">{item.kind.replace(/_/g, ' ')}</span>
-                  <span> · {fmtDate(meetingDateOf(item))}</span>
+                <div class="title">{v.title}</div>
+                <div class="muted small row-meta">
+                  <span class="dot dot-{v.tone}" aria-hidden="true"></span>
+                  <span class="kind">{
+                    v.tone === 'review'
+                      ? (v.queueItem?.kind ?? 'review').replace(/_/g, ' ')
+                      : v.tone === 'processed'
+                      ? (v.classification ?? 'processed')
+                      : v.tone === 'skipped'
+                      ? (v.skipReason ?? 'skipped')
+                      : 'dismissed'
+                  }</span>
+                  {#if v.createdAt}<span> · {fmtDate(v.createdAt)}</span>{/if}
                 </div>
               </button>
             </li>
@@ -295,113 +332,50 @@
       <button class="mobile-back btn small" onclick={() => (selected = null)}>
         <Icon name="arrow-left" size={14} /> back
       </button>
-    {/if}
-    {#if tab === 'skipped'}
-      <div class="muted">These notes were intentionally skipped during ingest (solo brainstorming, group meetings, or errors). Listed for transparency.</div>
-    {:else if tab === 'processed'}
-      <div class="muted">Processed notes have been turned into people + meetings. Tap a row to open the person.</div>
-    {:else if !selected}
-      <div class="muted desktop-only">Pick an item.</div>
-    {:else if selected.kind === 'meeting_classification'}
-      {@const p = payload<MeetingClassificationPayload>(selected)}
+
       <header class="head">
-        <h2>{p.note?.title ?? '(untitled note)'}</h2>
+        <div class="head-top">
+          <h2>{selected.title}</h2>
+          <span class="status-pill tone-{selected.tone}">{selected.statusLabel}</span>
+        </div>
         <div class="meta muted small">
-          {#if p.note?.owner?.name}{p.note.owner.name} · {/if}
-          {fmtDateTime(p.note.created_at)}
-          {#if p.note?.web_url}
-            · <a href={p.note.web_url} target="_blank" rel="noopener">open in Granola ↗</a>
+          {#if selected.ownerName}{selected.ownerName} · {/if}
+          {#if selected.createdAt}{fmtDateTime(selected.createdAt)}{/if}
+          {#if selected.webUrl}
+            · <a href={selected.webUrl} target="_blank" rel="noopener">open in Granola ↗</a>
           {/if}
         </div>
       </header>
 
-      <!-- Action panel comes BEFORE content so the resolve buttons stay
-           above the fold without scrolling past a long transcript. -->
-      {#if tab === 'pending'}
-        <div class="resolve-block resolve-top">
+      {#if isReviewAction && selected.queueItem?.kind === 'meeting_classification'}
+        {@const p = selected.queueItem.payload as MeetingClassificationPayload}
+        <div class="resolve-block">
           <div class="label">Resolve as 1:1</div>
           <p class="muted small">
             Calendar didn't surface a counterpart, so we need who this was with.
             We'll either find an existing person or create one.
           </p>
           <div class="row">
-            <input
-              placeholder="Counterpart name (e.g. Aaron Hamlin)"
-              bind:value={counterpartName}
-              disabled={resolving}
-            />
-            <input
-              placeholder="email (optional)"
-              bind:value={counterpartEmail}
-              disabled={resolving}
-            />
+            <input placeholder="Counterpart name (e.g. Aaron Hamlin)" bind:value={counterpartName} disabled={resolving} />
+            <input placeholder="email (optional)" bind:value={counterpartEmail} disabled={resolving} />
           </div>
-          {#if resolveError}
-            <div class="error">{resolveError}</div>
-          {/if}
+          {#if resolveError}<div class="error">{resolveError}</div>{/if}
           <div class="actions">
             <button
               class="btn btn-primary"
               onclick={resolveOneOnOne}
               disabled={resolving || (!counterpartName.trim() && !counterpartEmail.trim())}
-            >
-              {resolving ? 'creating…' : 'create 1:1'}
-            </button>
+            >{resolving ? 'creating…' : 'create 1:1'}</button>
             <button class="btn" onclick={() => resolve('resolve', { classification: 'group' })} disabled={resolving}>group (skip)</button>
             <button class="btn" onclick={() => resolve('dismiss')} disabled={resolving}>dismiss</button>
           </div>
-        </div>
-      {:else if p.resolved_person_id}
-        <div class="muted small resolve-top">
-          → resolved to person <a href={`/people/${p.resolved_person_id}`}>{p.resolved_person_id}</a>
-        </div>
-      {/if}
-
-      <div class="grid">
-        <div class="field">
-          <div class="label">Event title</div>
-          <div>{p.event_title ?? '—'}</div>
-        </div>
-        <div class="field">
-          <div class="label">Attendees (calendar)</div>
-          {#if p.attendees.length === 0}
-            <div class="muted">none matched</div>
-          {:else}
-            <ul class="inline">
-              {#each p.attendees as a}
-                <li>{a.name ?? a.email}{a.email && a.name ? ` <${a.email}>` : ''}</li>
-              {/each}
-            </ul>
+          {#if p.classifier_reason}
+            <p class="muted small reason">Why ambiguous: {p.classifier_reason}</p>
           {/if}
         </div>
-        <div class="field">
-          <div class="label">Why ambiguous</div>
-          <div>{p.classifier_reason}</div>
-        </div>
-      </div>
-
-      <NoteContent
-        summary={p.note?.summary}
-        transcript={p.note?.transcript_preview}
-        noteId={p.note?.id}
-      />
-
-    {:else if selected.kind === 'person_resolution'}
-      {@const p = payload<PersonResolutionPayload>(selected)}
-      <header class="head">
-        <h2>{p.note?.title ?? 'Person resolution'}</h2>
-        <div class="meta muted small">
-          {#if p.note?.created_at}{fmtDateTime(p.note.created_at)}{/if}
-          {#if p.note?.web_url}
-            · <a href={p.note.web_url} target="_blank" rel="noopener">open in Granola ↗</a>
-          {/if}
-        </div>
-      </header>
-
-      <!-- Action panel above content for the same reason as
-           meeting_classification — keep it above the fold. -->
-      {#if tab === 'pending'}
-        <div class="resolve-block resolve-top">
+      {:else if isReviewAction && selected.queueItem?.kind === 'person_resolution'}
+        {@const p = selected.queueItem.payload as PersonResolutionPayload}
+        <div class="resolve-block">
           {#if p.candidates?.length}
             <div class="label">Candidates</div>
             <div class="actions">
@@ -412,65 +386,45 @@
               {/each}
             </div>
           {/if}
-
           <div class="label">Or create a new person</div>
           <div class="row">
             <input placeholder="name" bind:value={counterpartName} disabled={resolving} />
             <input placeholder="email" bind:value={counterpartEmail} disabled={resolving} />
           </div>
-          {#if resolveError}
-            <div class="error">{resolveError}</div>
-          {/if}
+          {#if resolveError}<div class="error">{resolveError}</div>{/if}
           <div class="actions">
             <button
               class="btn btn-primary"
               disabled={resolving || (!counterpartName.trim() && !counterpartEmail.trim())}
               onclick={() => resolve('resolve', { new_person: { name: counterpartName.trim() || undefined, email: counterpartEmail.trim() || undefined } })}
-            >
-              {resolving ? 'creating…' : 'create + ingest'}
-            </button>
+            >{resolving ? 'creating…' : 'create + ingest'}</button>
             <button class="btn" onclick={() => resolve('dismiss')} disabled={resolving}>dismiss</button>
           </div>
         </div>
-      {:else if p.resolved_person_id}
-        <div class="muted small resolve-top">
-          → resolved to person <a href={`/people/${p.resolved_person_id}`}>{p.resolved_person_id}</a>
+      {:else if selected.tone === 'processed' && selected.personId}
+        <div class="info-block info-processed">
+          <Icon name="check" size={14} />
+          Resolved to <a class="strong-link" href={`/people/${selected.personId}`}>{selected.personName ?? 'person'}</a>
+        </div>
+      {:else if selected.tone === 'skipped'}
+        <div class="info-block info-skipped">
+          <Icon name="x" size={14} />
+          {selected.statusLabel}{#if selected.skipReason && selected.skipReason !== selected.statusLabel.replace(/^Skipped — /, '')} — {selected.skipReason}{/if}
+        </div>
+      {:else if selected.tone === 'dismissed'}
+        <div class="info-block info-dismissed">
+          <Icon name="trash" size={14} />
+          You dismissed this. The note stays in Granola; it just isn't represented in your people graph.
         </div>
       {/if}
-
-      <div class="field">
-        <div class="label">Attendee from source</div>
-        {#if p.attendee?.email || p.attendee?.name}
-          <div>{p.attendee.name ?? ''} {p.attendee.email ? `<${p.attendee.email}>` : ''}</div>
-        {:else}
-          <div class="muted">{p.reason ?? 'no attendee info'}</div>
-        {/if}
-      </div>
 
       <NoteContent
-        summary={p.note?.summary}
-        transcript={p.note?.transcript_preview}
-        noteId={p.note?.id}
+        summary={selected.summary}
+        transcript={selected.transcript}
+        noteId={selected.noteId}
       />
-
-    {:else if selected.kind === 'extraction_review'}
-      <header class="head"><h2>Extraction review</h2></header>
-      <pre>{JSON.stringify(selected.payload, null, 2)}</pre>
-      {#if tab === 'pending'}
-        <div class="actions">
-          <button class="btn btn-primary" onclick={() => resolve('resolve', { accept_extraction: true })} disabled={resolving}>accept</button>
-          <button class="btn" onclick={() => resolve('dismiss')} disabled={resolving}>reject</button>
-        </div>
-      {/if}
-
     {:else}
-      <header class="head"><h2>{selected.kind}</h2></header>
-      <pre>{JSON.stringify(selected.payload, null, 2)}</pre>
-      {#if tab === 'pending'}
-        <div class="actions">
-          <button class="btn" onclick={() => resolve('dismiss')} disabled={resolving}>dismiss</button>
-        </div>
-      {/if}
+      <div class="muted desktop-only">Pick a note.</div>
     {/if}
   </section>
 </div>
@@ -483,37 +437,54 @@
     height: 100%;
     min-height: 0;
   }
-  .sidebar { border-right: 1px solid var(--border); background: white; overflow-y: auto; padding: 0; display: flex; flex-direction: column; }
-  .mobile-back { display: none; margin-bottom: 12px; }
-  .tabs {
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: white;
+    overflow-y: auto;
+    padding: 0;
     display: flex;
+    flex-direction: column;
+  }
+  .mobile-back { display: none; margin-bottom: 12px; }
+
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     border-bottom: 1px solid var(--border);
   }
   .tab {
-    flex: 1;
     background: none;
     border: 0;
-    padding: 10px 8px;
+    padding: 10px 4px;
     font: inherit;
     color: var(--muted);
     cursor: pointer;
     border-bottom: 2px solid transparent;
-    font-size: 13px;
+    font-size: 12px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    line-height: 1.2;
   }
-  .tab:hover { background: var(--hover); }
+  .tab:hover { background: var(--hover); color: var(--fg); }
   .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+  .tab-label { font-weight: 500; }
   .count {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--muted);
     background: var(--hover);
     border-radius: 999px;
     padding: 1px 6px;
-    margin-left: 4px;
+    font-variant-numeric: tabular-nums;
   }
+  .tab.active .count { background: rgba(67, 56, 202, 0.10); color: var(--accent); }
+
   .header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; }
-  .link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; }
+  .link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; font-size: 12px; }
+
   .list { list-style: none; padding: 0 8px 8px; margin: 0; display: flex; flex-direction: column; gap: 2px; }
-  .list button, .processed-row {
+  .list button {
     width: 100%;
     text-align: left;
     background: white;
@@ -522,64 +493,99 @@
     padding: 8px 10px;
     display: block;
     color: inherit;
-    text-decoration: none;
+    cursor: pointer;
+    font: inherit;
   }
-  .list button:hover, .processed-row:hover { background: var(--hover); }
+  .list button:hover { background: var(--hover); }
   .list button.active { background: var(--hover); border-color: var(--border); }
   .title { font-weight: 500; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-meta { display: inline-flex; align-items: center; gap: 4px; }
   .kind { text-transform: capitalize; }
-  .content { padding: 24px 32px; overflow-y: auto; }
-  .head h2 { margin: 0 0 4px; }
-  .meta { margin-bottom: 16px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-  .field { margin-bottom: 16px; }
-  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
-  .inline { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
-  pre {
+
+  /* Tone-coloured dot in the list row, matches status pill in the detail. */
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .dot-review    { background: var(--accent); }
+  .dot-skipped   { background: #94a3b8; }
+  .dot-processed { background: #16a34a; }
+  .dot-dismissed { background: #b91c1c; }
+
+  .content { padding: 24px 32px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+  .head { display: flex; flex-direction: column; gap: 6px; }
+  .head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .head h2 { margin: 0; font-size: 22px; line-height: 1.25; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+  .status-pill {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
     background: var(--hover);
-    padding: 12px;
-    border-radius: 6px;
-    overflow-x: auto;
-    max-height: 60vh;
+    color: var(--muted);
+    flex-shrink: 0;
+    white-space: nowrap;
   }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
-  .resolve-block { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
-  .resolve-top {
-    margin-top: 0;
-    margin-bottom: 16px;
-    padding-top: 0;
-    padding-bottom: 16px;
-    border-top: 0;
-    border-bottom: 1px solid var(--border);
+  .tone-review    { background: rgba(67, 56, 202, 0.10); color: var(--accent); }
+  .tone-skipped   { background: rgba(148, 163, 184, 0.18); color: #475569; }
+  .tone-processed { background: rgba(22, 163, 74, 0.10); color: #15803d; }
+  .tone-dismissed { background: rgba(185, 28, 28, 0.08); color: #991b1b; }
+
+  .info-block {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: white;
+    font-size: 13px;
+    width: fit-content;
   }
-  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .info-processed { border-color: rgba(22, 163, 74, 0.25); background: rgba(22, 163, 74, 0.05); color: #15803d; }
+  .info-skipped   { border-color: rgba(148, 163, 184, 0.35); background: rgba(148, 163, 184, 0.08); color: #475569; }
+  .info-dismissed { border-color: rgba(185, 28, 28, 0.20); background: rgba(185, 28, 28, 0.04); color: #991b1b; }
+  .strong-link { font-weight: 600; }
+
+  .resolve-block {
+    border: 1px solid var(--border);
+    background: white;
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+  .row { display: flex; gap: 8px; }
   .row input { flex: 1; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .reason { margin: 4px 0 0; }
   .error {
     color: #7a1e1e;
     background: #fff4f4;
     border: 1px solid #f0c0c0;
     border-radius: 6px;
     padding: 8px;
-    margin-top: 8px;
     font-size: 13px;
   }
 
   @media (max-width: 720px) {
     .layout { grid-template-columns: 1fr; }
-    /* Show one pane at a time, driven by data-pane on the layout root. */
     .layout[data-pane='list'] .content { display: none; }
     .layout[data-pane='detail'] .sidebar { display: none; }
     .sidebar { border-right: 0; }
     .content { padding: 16px; }
     .mobile-back { display: inline-flex; }
     .desktop-only { display: none; }
-    .grid { grid-template-columns: 1fr; gap: 8px; }
-    /* Tabs stay visible with their counts; just give them more vertical
-       breathing room and let the count chip stay on the same line. */
-    .tab { padding: 12px 4px; font-size: 13px; }
-    .count { font-size: 10px; padding: 1px 5px; }
-    /* Touch-friendly list rows. */
-    .list button, .processed-row { padding: 12px; }
+    .head h2 { font-size: 18px; }
+    .head-top { flex-direction: column; gap: 8px; }
+    .tab { padding: 10px 2px; }
+    .tab-label { font-size: 11px; }
+    .row { flex-direction: column; }
+    .list button { padding: 12px; }
     .list { padding: 0 8px 8px; }
   }
 </style>

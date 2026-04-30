@@ -341,6 +341,10 @@
       last_met_date: view.person.last_met_date,
       meeting_count: view.person.meeting_count,
       aliases: view.aliases,
+      roles: view.roles,
+      context: view.person.context,
+      needs: view.person.needs,
+      offers: view.person.offers,
     }}
     onClose={() => (mergeOpen = false)}
     onMerged={() => onMerged()}
