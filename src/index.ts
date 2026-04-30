@@ -75,7 +75,7 @@ app.get('/api/run/check-granola', requireAuth, async (c) => {
   const key = c.env.GRANOLA_API_KEY;
   if (!key) return c.json({ error: 'GRANOLA_API_KEY not set' }, 500);
   try {
-    const url = 'https://api.granola.so/v1/notes?limit=1';
+    const url = 'https://public-api.granola.ai/v1/notes';
     const resp = await fetch(url, {
       headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
     });

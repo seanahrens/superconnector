@@ -15,7 +15,8 @@ const SOURCE = 'granola';
 export async function runIngest(env: Env): Promise<{ processed: number; skipped: number }> {
   const since = await getHighWaterMark(env);
   const granola = new GranolaClient(env.GRANOLA_API_KEY);
-  const notes = await granola.listNotes({ since: since ?? undefined, limit: 50 });
+  // List returns lightweight note objects without transcripts.
+  const notes = await granola.listNotes({ created_after: since ?? undefined, limit: 50 });
 
   let icsEvents: IcsEvent[] | null = null;
   let lastRef = since;
@@ -25,18 +26,21 @@ export async function runIngest(env: Env): Promise<{ processed: number; skipped:
   for (const note of notes) {
     if (await isAlreadyIngested(env, note.id)) {
       skipped++;
+      if (!lastRef || note.created_at > lastRef) lastRef = note.created_at;
       continue;
     }
     if (!icsEvents) {
       icsEvents = env.PROTON_ICS_URL ? await fetchIcs(env.PROTON_ICS_URL).catch(() => []) : [];
     }
     try {
-      await processNote(env, note, icsEvents);
+      // Fetch the full note (with transcript) only for notes we'll actually process.
+      const fullNote = await granola.getNote(note.id);
+      await processNote(env, fullNote, icsEvents);
       processed++;
     } catch (err) {
       console.error('ingest error', { noteId: note.id, err: (err as Error).message });
     }
-    if (!lastRef || note.recordedAt > lastRef) lastRef = note.recordedAt;
+    if (!lastRef || note.created_at > lastRef) lastRef = note.created_at;
   }
 
   if (lastRef && lastRef !== since) await setHighWaterMark(env, lastRef);
@@ -45,11 +49,12 @@ export async function runIngest(env: Env): Promise<{ processed: number; skipped:
 }
 
 async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Promise<void> {
-  const recordedAt = new Date(note.recordedAt);
+  const recordedAt = new Date(note.created_at);
   const candidates = eventsAround(events, recordedAt, 15);
   const { event, confidence } = bestEventForNote(candidates, note.title);
 
-  const attendees = (event?.attendees ?? note.attendees ?? []).map((a) => ({
+  // Attendees come from the calendar event only (Granola API has no attendee field).
+  const attendees = (event?.attendees ?? []).map((a) => ({
     email: a.email ?? null,
     name: a.name ?? null,
   }));
@@ -61,8 +66,7 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
     attendees,
   });
 
-  // Group meetings: log the meeting against an empty placeholder? No — per plan v1
-  // we skip group meetings entirely.
+  // Group meetings: skip entirely in v1.
   if (cls.classification === 'group') return;
 
   if (cls.classification === 'ambiguous') {
@@ -114,7 +118,7 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
     resolved.personId,
     SOURCE,
     note.id,
-    note.recordedAt,
+    note.created_at,
     null,
     event ? confidence : null,
     event?.summary ?? null,
@@ -150,8 +154,8 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
           context: existing.context,
           needs: existing.needs,
           offers: existing.offers,
-          roles: parseJsonArrayLocal(existing.roles),
-          trajectoryTags: parseJsonArrayLocal(existing.trajectory_tags),
+          roles: parseJsonArray(existing.roles),
+          trajectoryTags: parseJsonArray(existing.trajectory_tags),
         }
       : undefined,
   });
@@ -192,7 +196,7 @@ async function setHighWaterMark(env: Env, ts: string): Promise<void> {
   ).bind(SOURCE, ts, now).run();
 }
 
-function parseJsonArrayLocal(s: string | null): string[] {
+function parseJsonArray(s: string | null): string[] {
   if (!s) return [];
   try {
     const parsed = JSON.parse(s);
