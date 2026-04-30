@@ -1,5 +1,6 @@
 import type { Tool } from './types';
 import { ulid, nowIso } from '../lib/ulid';
+import { normalizeTagName } from '../lib/tag_norm';
 
 interface ApplyInput {
   person_id: string;
@@ -21,7 +22,7 @@ export const applyTagTool: Tool<ApplyInput, { tag_id: string; created: boolean }
     additionalProperties: false,
   },
   async handler(env, input) {
-    const tagName = input.tag_name.trim().toLowerCase();
+    const tagName = normalizeTagName(input.tag_name);
     let created = false;
     let tagId: string;
     const existing = await env.DB.prepare('SELECT id FROM tags WHERE name = ?1').bind(tagName).first<{ id: string }>();
@@ -60,7 +61,7 @@ export const removeTagTool: Tool<RemoveInput, { ok: true }> = {
     additionalProperties: false,
   },
   async handler(env, input) {
-    const tagName = input.tag_name.trim().toLowerCase();
+    const tagName = normalizeTagName(input.tag_name);
     await env.DB.prepare(
       `DELETE FROM person_tags WHERE person_id = ?1
          AND tag_id IN (SELECT id FROM tags WHERE name = ?2)`,
@@ -118,7 +119,7 @@ export const reviewTagProposalTool: Tool<
       if (!input.merge_into_tag_name) throw new Error('merge_into_tag_name required for merge');
       const target = await env.DB.prepare(
         'SELECT id FROM tags WHERE name = ?1',
-      ).bind(input.merge_into_tag_name.toLowerCase()).first<{ id: string }>();
+      ).bind(normalizeTagName(input.merge_into_tag_name)).first<{ id: string }>();
       if (!target) throw new Error('target tag not found');
       targetTagId = target.id;
       await env.DB.prepare(
@@ -131,7 +132,7 @@ export const reviewTagProposalTool: Tool<
         `INSERT INTO tags (id, name, category, created_at) VALUES (?1, ?2, ?3, ?4)`,
       ).bind(
         targetTagId,
-        proposal.proposed_name.toLowerCase(),
+        normalizeTagName(proposal.proposed_name),
         input.accepted_category ?? proposal.proposed_category ?? 'free',
         nowIso(),
       ).run();

@@ -22,7 +22,9 @@
       | 'grip-vertical'
       | 'arrow-down-az'
       | 'merge'
-      | 'chevron-down';
+      | 'chevron-down'
+      | 'sort'
+      | 'filter';
     size?: number;
     strokeWidth?: number;
     'aria-hidden'?: boolean | 'true' | 'false';
@@ -117,5 +119,13 @@
     <path d="M12 10v10" />
   {:else if name === 'chevron-down'}
     <polyline points="6 9 12 15 18 9" />
+  {:else if name === 'sort'}
+    <path d="M3 6h13" />
+    <path d="M3 12h9" />
+    <path d="M3 18h5" />
+    <path d="M17 4v16" />
+    <polyline points="13 16 17 20 21 16" />
+  {:else if name === 'filter'}
+    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
   {/if}
 </svg>

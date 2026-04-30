@@ -8,6 +8,7 @@ import type { ExtractionResult } from './extract';
 import type { PersonRow } from './db';
 import { parseJsonArray, parseJsonObject } from './db';
 import { upsertPersonVector } from './embed';
+import { normalizeTagName } from './tag_norm';
 import { ulid, nowIso } from './ulid';
 
 const HIGH_CONFIDENCE = 0.7;
@@ -119,7 +120,7 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
        VALUES (?1, ?2, ?3, ?4, 'pending', ?5)`,
     ).bind(
       ulid(),
-      prop.name,
+      normalizeTagName(prop.name),
       prop.category,
       JSON.stringify([personId]),
       now,

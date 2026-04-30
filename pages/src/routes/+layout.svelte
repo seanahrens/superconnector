@@ -28,8 +28,8 @@
   }> = [
     { href: '/people', label: 'People', icon: 'users' },
     { href: '/notes', label: 'Notes', icon: 'file-text' },
-    { href: '/tags', label: 'Tags', icon: 'tag' },
     { href: '/followups', label: 'Followups', icon: 'list-todo' },
+    { href: '/tags', label: 'Tags', icon: 'tag' },
   ];
 </script>
 
