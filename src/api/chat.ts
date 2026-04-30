@@ -60,12 +60,20 @@ app.post('/threads/:id/messages', async (c) => {
 
   // Load or create thread.
   let thread = await c.env.DB.prepare('SELECT * FROM chat_threads WHERE id = ?1').bind(threadId).first<ChatThreadRow>();
+  // Track the *behavioral* scope separately from the persisted row scope:
+  // the chat_threads table has a CHECK constraint that only permits
+  // ('global', null) or ('person', not-null). For a 'new-person' thread we
+  // store as 'global' until add_person resolves a real person_id, then we
+  // promote the row to ('person', <id>). The streaming handler still gets
+  // the user-intended scope so the system prompt is right.
+  const desiredScope = body.scope ?? 'global';
+  const persistedScope = desiredScope === 'new-person' ? 'global' : desiredScope;
   if (!thread) {
     const now = nowIso();
     thread = {
       id: threadId,
-      scope: body.scope ?? 'global',
-      person_id: body.person_id ?? null,
+      scope: persistedScope,
+      person_id: persistedScope === 'person' ? (body.person_id ?? null) : null,
       title: body.content.slice(0, 60),
       created_at: now,
       updated_at: now,
@@ -96,7 +104,7 @@ app.post('/threads/:id/messages', async (c) => {
         text: `You are operating in the context of ONE person:\n\n${summarizePersonForPrompt(view)}\n\nWhen the user asks something about "they/them/her/him" without naming, default to this person. When using tools that take person_id, use ${view.person.id} unless told otherwise.`,
       });
     }
-  } else if (thread.scope === 'new-person') {
+  } else if (desiredScope === 'new-person') {
     systemBlocks.push({
       type: 'text',
       text:
@@ -116,7 +124,7 @@ app.post('/threads/:id/messages', async (c) => {
 
   const anthropicMessages: Anthropic.MessageParam[] = priorMessages.map(toAnthropic);
 
-  const stream = streamAssistantTurn(c.env, thread.id, systemBlocks, anthropicMessages, thread.scope as 'global' | 'person' | 'new-person');
+  const stream = streamAssistantTurn(c.env, thread.id, systemBlocks, anthropicMessages, desiredScope);
   return new Response(stream, {
     headers: {
       'content-type': 'text/event-stream',
