@@ -710,6 +710,35 @@ speaker column already does most of the disambiguation.
 
 ---
 
+## K. Notes detail: action panel above the transcript, shorter transcript
+
+In `pages/src/routes/notes/+page.svelte` (and the upcoming
+`<NoteContent>` component from TODO G1), the "Resolve as 1:1" /
+"create + ingest" action block currently sits at the bottom of the
+detail pane, below the transcript preview. On a backlog of long
+transcripts this means scrolling past hundreds of lines just to act.
+
+**Goal.**
+
+- Move the resolve / dismiss / counterpart-input section to the top of
+  the detail pane, right under the header and metadata. Action first,
+  context second.
+- Halve the transcript scroll-region height: change `.transcript`'s
+  `max-height: 50vh` → `25vh` (and `pre`'s `max-height: 60vh` → `30vh`).
+  Keeps the transcript scrubbable but lets the resolve actions stay
+  visible without scrolling on typical screens.
+- Order on the page becomes: header → resolve actions → Granola event
+  metadata → summary → transcript.
+
+**Touch points.**
+- `pages/src/routes/notes/+page.svelte` — reorder the JSX blocks
+  inside each `selected.kind === ...` branch and adjust the
+  `.transcript` / `pre` max-heights. Mobile already collapses the
+  layout; verify the action block stays comfortably above the fold
+  in both viewports.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
