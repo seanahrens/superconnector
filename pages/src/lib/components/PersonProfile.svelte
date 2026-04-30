@@ -8,6 +8,7 @@
   import MergeModal from './MergeModal.svelte';
   import PersonAvatar from './PersonAvatar.svelte';
   import ContactRow from './ContactRow.svelte';
+  import EditableField from './EditableField.svelte';
 
   interface Props {
     view: PersonView;
@@ -108,16 +109,47 @@
     />
     <div class="hero-main">
       <div class="hero-top">
-        <h1>{view.person.display_name ?? '(unnamed)'}</h1>
+        <h1>
+          <EditableField
+            value={view.person.display_name}
+            placeholder="(unnamed)"
+            label="Edit name"
+            onSave={async (next) => {
+              await api.patch(`/api/people/${view.person.id}`, { display_name: next });
+              await onChanged();
+            }}
+          />
+        </h1>
         <span class="spacer"></span>
         <button class="btn small ghost" onclick={() => (mergeOpen = true)} title="Merge a duplicate into this person">
           <Icon name="merge" size={14} /> Merge with…
         </button>
       </div>
       <div class="hero-meta muted small">
-        {#if view.person.primary_email}
-          <span class="meta-cell"><Icon name="message-square" size={12} />{view.person.primary_email}</span>
-        {/if}
+        <span class="meta-cell">
+          <EditableField
+            value={view.person.primary_email}
+            placeholder="add email"
+            label="Edit email"
+            type="email"
+            onSave={async (next) => {
+              await api.patch(`/api/people/${view.person.id}`, { email: next });
+              await onChanged();
+            }}
+          />
+        </span>
+        <span class="meta-cell">
+          <EditableField
+            value={view.person.phone}
+            placeholder="add phone"
+            label="Edit phone"
+            type="tel"
+            onSave={async (next) => {
+              await api.patch(`/api/people/${view.person.id}`, { phone: next });
+              await onChanged();
+            }}
+          />
+        </span>
         {#if view.person.geo}<span class="meta-cell">{view.person.geo}</span>{/if}
         <span class="meta-cell">last met {view.person.last_met_date ?? '—'}</span>
         <span class="meta-cell">{view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}</span>

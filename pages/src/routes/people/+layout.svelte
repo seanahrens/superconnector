@@ -54,6 +54,11 @@
   $effect(() => { void [sort, tags, roles, tagMode, q]; load(); });
   $effect(() => { loadTags(); });
 
+  // Re-pull the list whenever the route under /people changes — e.g. after
+  // the AddPersonModal navigates to /people/<new-id>, the new person needs
+  // to appear in the sidebar without a refresh.
+  $effect(() => { void $page.url.pathname; void load(); });
+
   function toggleTag(name: string) {
     tags = tags.includes(name) ? tags.filter((t) => t !== name) : [...tags, name];
   }
@@ -72,6 +77,22 @@
   const onSubroute = $derived($page.url.pathname !== '/people');
 
   let addOpen = $state(false);
+
+  // When the user lands on /people exactly (no subroute), auto-redirect
+  // them to the top person in the current list. Skips the hollow
+  // "Pick a person" placeholder. `replaceState: true` so back/forward
+  // doesn't get stuck looping into the same redirect.
+  $effect(() => {
+    if (
+      !loading &&
+      items.length > 0 &&
+      $page.url.pathname === '/people' &&
+      typeof window !== 'undefined'
+    ) {
+      const topId = items[0]?.person_id;
+      if (topId) goto(`/people/${topId}`, { replaceState: true });
+    }
+  });
 </script>
 
 <div class="layout" data-pane={onSubroute ? 'detail' : 'list'}>

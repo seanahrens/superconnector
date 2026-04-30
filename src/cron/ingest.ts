@@ -15,6 +15,7 @@ import { classifyMeeting, bestEventForNote, voteClassification } from '../lib/cl
 import { resolvePerson } from '../lib/resolve';
 import { extractFromMeeting } from '../lib/extract';
 import { applyExtractionResult } from '../lib/people_writes';
+import { findMePerson, ensureMePerson } from '../lib/me';
 import { materializeFromGranolaNote } from '../lib/queue_resolve';
 import { recordDisposition, type Disposition } from '../lib/ingest_log';
 import { ulid, nowIso } from '../lib/ulid';
@@ -35,6 +36,12 @@ export async function runIngest(
   const since = opts.forceSince ?? (await getHighWaterMark(env));
   const granola = new GranolaClient(env.GRANOLA_API_KEY);
   const notes = await granola.listNotes({ created_after: since ?? undefined, limit: 50 });
+
+  // Cold-start safety: make sure the "Me" row exists so [microphone] self-
+  // statements have somewhere to land. Idempotent — no-op once it exists.
+  await ensureMePerson(env, null).catch((err) =>
+    console.error('ensureMePerson failed', (err as Error).message),
+  );
 
   let icsEvents: IcsEvent[] | null = null;
   let lastRef = since;
@@ -367,6 +374,7 @@ async function processNote(
     trajectory_tags: string | null;
   }>();
 
+  const me = await findMePerson(env);
   const result = await extractFromMeeting(env, {
     source: SOURCE,
     noteTitle: note.title,
@@ -382,9 +390,24 @@ async function processNote(
           trajectoryTags: parseJsonArray(existing.trajectory_tags),
         }
       : undefined,
+    userPerson: me
+      ? {
+          displayName: me.display_name,
+          context: me.context,
+          needs: me.needs,
+          offers: me.offers,
+          roles: parseJsonArray(me.roles),
+          trajectoryTags: parseJsonArray(me.trajectory_tags),
+        }
+      : undefined,
   });
 
-  await applyExtractionResult(env, { personId: resolved.personId, meetingId, result });
+  await applyExtractionResult(env, {
+    personId: resolved.personId,
+    meetingId,
+    result,
+    mePersonId: me?.id ?? null,
+  });
   await logDisposition(env, note, 'processed', 'classifier 1:1 path', meetingId, resolved.personId);
   return 'processed';
 }
@@ -534,6 +557,7 @@ async function reprocessNote(
     trajectory_tags: string | null;
   }>();
 
+  const me = await findMePerson(env);
   const result = await extractFromMeeting(env, {
     source: SOURCE,
     noteTitle: note.title,
@@ -549,6 +573,16 @@ async function reprocessNote(
           trajectoryTags: parseJsonArray(existingPerson.trajectory_tags),
         }
       : undefined,
+    userPerson: me
+      ? {
+          displayName: me.display_name,
+          context: me.context,
+          needs: me.needs,
+          offers: me.offers,
+          roles: parseJsonArray(me.roles),
+          trajectoryTags: parseJsonArray(me.trajectory_tags),
+        }
+      : undefined,
   });
 
   await applyExtractionResult(env, {
@@ -556,6 +590,7 @@ async function reprocessNote(
     meetingId: existing.id,
     result,
     reprocess: true,
+    mePersonId: me?.id ?? null,
   });
   return 'reprocessed';
 }

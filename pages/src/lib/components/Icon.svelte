@@ -24,7 +24,8 @@
       | 'merge'
       | 'chevron-down'
       | 'sort'
-      | 'filter';
+      | 'filter'
+      | 'pencil';
     size?: number;
     strokeWidth?: number;
     'aria-hidden'?: boolean | 'true' | 'false';
@@ -127,5 +128,8 @@
     <polyline points="13 16 17 20 21 16" />
   {:else if name === 'filter'}
     <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+  {:else if name === 'pencil'}
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
   {/if}
 </svg>

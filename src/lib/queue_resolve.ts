@@ -15,6 +15,7 @@ import { GranolaClient, transcriptToString, noteContentHash } from './granola';
 import { resolvePerson } from './resolve';
 import { extractFromMeeting } from './extract';
 import { applyExtractionResult } from './people_writes';
+import { findMePerson } from './me';
 import { ulid, nowIso } from './ulid';
 import { parseJsonArray } from './db';
 
@@ -120,6 +121,7 @@ export async function materializeFromGranolaNote(
     trajectory_tags: string | null;
   }>();
 
+  const me = await findMePerson(env);
   const result = await extractFromMeeting(env, {
     source: SOURCE,
     noteTitle: note.title,
@@ -135,8 +137,23 @@ export async function materializeFromGranolaNote(
           trajectoryTags: parseJsonArray(existingPerson.trajectory_tags),
         }
       : undefined,
+    userPerson: me
+      ? {
+          displayName: me.display_name,
+          context: me.context,
+          needs: me.needs,
+          offers: me.offers,
+          roles: parseJsonArray(me.roles),
+          trajectoryTags: parseJsonArray(me.trajectory_tags),
+        }
+      : undefined,
   });
 
-  await applyExtractionResult(env, { personId, meetingId, result });
+  await applyExtractionResult(env, {
+    personId,
+    meetingId,
+    result,
+    mePersonId: me?.id ?? null,
+  });
   return { meetingId, personId, reused: false };
 }

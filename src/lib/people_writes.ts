@@ -4,7 +4,7 @@
 // Re-embedding hash is computed against the *new* person context after writes.
 
 import type { Env } from '../../worker-configuration';
-import type { ExtractionResult } from './extract';
+import type { ExtractionResult, ExtractedPersonUpdates, ExtractedSignal } from './extract';
 import type { PersonRow } from './db';
 import { parseJsonArray, parseJsonObject } from './db';
 import { upsertPersonVector } from './embed';
@@ -23,6 +23,10 @@ export interface ApplyOptions {
   // for this meeting so they don't pile up alongside the new ones. Followups
   // are intentionally kept (the user may have interacted with them).
   reprocess?: boolean;
+  /** When set, also apply result.user_updates / result.user_signals to
+      this id (the "Me" person). Lets self-statements made by the
+      microphone speaker accumulate on the user's own row. */
+  mePersonId?: string | null;
 }
 
 export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promise<void> {
@@ -143,6 +147,85 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
     const text = [fresh?.context, fresh?.needs, fresh?.offers].filter(Boolean).join('\n\n');
     if (text.length > 0) {
       await upsertPersonVector(env, personId, text);
+    }
+  }
+
+  // "Me" updates from microphone-side self-statements. Only apply when:
+  //   - we have a mePersonId,
+  //   - the LLM extracted user_updates and/or user_signals,
+  //   - the kept counterpart isn't already the user (don't double-write
+  //     to a 1:1 with yourself, which shouldn't happen anyway).
+  if (
+    opts.mePersonId &&
+    opts.mePersonId !== personId &&
+    (result.user_updates || (result.user_signals && result.user_signals.length > 0))
+  ) {
+    await applySelfUpdates(env, opts.mePersonId, meetingId, result.user_updates, result.user_signals, lowConfidence, now);
+  }
+}
+
+async function applySelfUpdates(
+  env: Env,
+  meId: string,
+  meetingId: string,
+  updates: ExtractedPersonUpdates | undefined,
+  signals: ExtractedSignal[] | undefined,
+  lowConfidence: boolean,
+  now: string,
+): Promise<void> {
+  const me = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(meId).first<PersonRow>();
+  if (!me) return;
+
+  if (updates && !lowConfidence) {
+    const newDisplayName = updates.display_name ?? me.display_name ?? null;
+    const newRoles = mergeArray(parseJsonArray(me.roles), updates.roles_add);
+    const newTraj = mergeArray(parseJsonArray(me.trajectory_tags), updates.trajectory_tags_add);
+    const newStatus = { ...parseJsonObject(me.status), ...(updates.status_patch ?? {}) };
+    let newContext = me.context;
+    if (updates.context_delta) {
+      const dateMarker = `[${now.slice(0, 10)}]`;
+      newContext = me.context_manual_override
+        ? me.context
+        : [me.context, `${dateMarker} ${updates.context_delta}`].filter(Boolean).join('\n\n');
+    }
+    const newNeeds = updates.needs_replacement ?? me.needs;
+    const newOffers = updates.offers_replacement ?? me.offers;
+
+    await env.DB.prepare(
+      `UPDATE people
+         SET display_name = ?1, roles = ?2, trajectory_tags = ?3, status = ?4,
+             context = ?5, needs = ?6, offers = ?7, updated_at = ?8
+       WHERE id = ?9`,
+    ).bind(
+      newDisplayName,
+      JSON.stringify(newRoles),
+      JSON.stringify(newTraj),
+      JSON.stringify(newStatus),
+      newContext,
+      newNeeds,
+      newOffers,
+      now,
+      meId,
+    ).run();
+
+    if (updates.context_delta || updates.needs_replacement || updates.offers_replacement) {
+      const text = [newContext, newNeeds, newOffers].filter(Boolean).join('\n\n');
+      if (text.length > 0) {
+        try {
+          await upsertPersonVector(env, meId, text);
+        } catch (err) {
+          console.error('apply self updates: re-embed failed', err);
+        }
+      }
+    }
+  }
+
+  if (signals && signals.length > 0) {
+    for (const sig of signals) {
+      await env.DB.prepare(
+        `INSERT INTO signals (id, person_id, meeting_id, kind, body, confidence, superseded_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)`,
+      ).bind(ulid(), meId, meetingId, sig.kind, sig.body, sig.confidence, now).run();
     }
   }
 }

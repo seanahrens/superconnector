@@ -1,10 +1,12 @@
 <script lang="ts">
-  // Lightweight modal for "add a person" — single textarea, then submit.
-  // On submit, navigates to /people/new?seed=<urlencoded text> which the
-  // chat-based new-person page picks up and auto-sends. Keeps the friction
-  // of the action down to one tap from the FAB → one input → done.
+  // Single-textarea modal that creates a person inline. Submitting kicks
+  // off a 'new-person' chat stream in the background; the modal stays
+  // open with a disabled "Adding…" button until the person_created event
+  // fires, then closes and navigates to /people/<id>.
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { api } from '$lib/api';
+  import { ulid } from '$lib/ulid';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -14,35 +16,70 @@
 
   let text = $state('');
   let textareaEl: HTMLTextAreaElement | undefined = $state();
+  let submitting = $state(false);
+  let error = $state<string | null>(null);
+  let progress = $state<string>(''); // small status line ("Creating…" → "Capturing details…")
 
   onMount(() => {
     textareaEl?.focus();
   });
 
-  function submit() {
+  async function submit() {
     const t = text.trim();
-    if (!t) return;
-    void goto(`/people/new?seed=${encodeURIComponent(t)}`);
+    if (!t || submitting) return;
+    submitting = true;
+    error = null;
+    progress = 'Creating record…';
+    let createdId: string | null = null;
+    try {
+      const threadId = ulid();
+      for await (const ev of api.chatStream(threadId, t, 'new-person')) {
+        if (ev.type === 'tool_use') {
+          if (ev.name === 'add_person') progress = 'Creating record…';
+          else if (ev.name === 'dictate') progress = 'Capturing details…';
+        } else if (ev.type === 'person_created') {
+          createdId = ev.id;
+          // Don't break — let dictate run too. We'll redirect when done.
+        } else if (ev.type === 'error') {
+          throw new Error(ev.message);
+        } else if (ev.type === 'done') {
+          break;
+        }
+      }
+      if (!createdId) {
+        throw new Error('No person was created. Try giving more identifying info.');
+      }
+      onClose();
+      void goto(`/people/${createdId}`);
+    } catch (err) {
+      error = (err as Error).message;
+      progress = '';
+    } finally {
+      submitting = false;
+    }
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && !submitting) {
       e.preventDefault();
       onClose();
     } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      // ⌘+Enter / Ctrl+Enter submits.
       e.preventDefault();
-      submit();
+      void submit();
     }
+  }
+
+  function maybeClose() {
+    if (!submitting) onClose();
   }
 </script>
 
-<button class="scrim" onclick={onClose} aria-label="close"></button>
+<button class="scrim" onclick={maybeClose} aria-label="close"></button>
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="addperson-title">
   <header class="hd">
     <h2 id="addperson-title">Add a person</h2>
     <span class="spacer"></span>
-    <button class="btn icon-only ghost" onclick={onClose} aria-label="Close">
+    <button class="btn icon-only ghost" onclick={maybeClose} aria-label="Close" disabled={submitting}>
       <Icon name="x" size={16} />
     </button>
   </header>
@@ -56,12 +93,27 @@
     onkeydown={onKey}
     rows="6"
     placeholder="e.g. Hale Guyer, Community Operations at FAR Labs. Self-described superconnector. Offering free office space in exchange for tooling help…"
+    disabled={submitting}
   ></textarea>
+
+  {#if error}<div class="error">{error}</div>{/if}
+
   <div class="actions">
-    <span class="muted small kbd-hint">⌘+Enter to submit</span>
+    {#if submitting}
+      <span class="muted small status">{progress}</span>
+    {:else}
+      <span class="muted small kbd-hint">⌘+Enter to submit</span>
+    {/if}
     <span class="spacer"></span>
-    <button class="btn ghost" onclick={onClose}>Cancel</button>
-    <button class="btn btn-primary" onclick={submit} disabled={!text.trim()}>Add person</button>
+    <button class="btn ghost" onclick={onClose} disabled={submitting}>Cancel</button>
+    <button class="btn btn-primary" onclick={submit} disabled={submitting || !text.trim()}>
+      {#if submitting}
+        <span class="spinner" aria-hidden="true"></span>
+        Adding…
+      {:else}
+        Add person
+      {/if}
+    </button>
   </div>
 </div>
 
@@ -100,7 +152,35 @@
     background: white;
   }
   .actions { display: flex; align-items: center; gap: 8px; }
-  .kbd-hint { user-select: none; }
+  .kbd-hint, .status { user-select: none; }
+  .status { color: var(--accent); font-weight: 500; }
+
+  .error {
+    color: #7a1e1e;
+    background: #fff4f4;
+    border: 1px solid #f0c0c0;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin-right: 6px;
+    vertical-align: -2px;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 1.6s; }
+  }
 
   @media (max-width: 720px) {
     .modal {

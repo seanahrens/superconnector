@@ -1249,6 +1249,43 @@ project this has clearly happened multiple times.
 
 ---
 
+## U. Distinct home vs work location
+
+**Why.** The `geo` column on `people` is a single string today, so when
+the LLM extracts both "lives in Berlin" and "works at FAR Labs (Boulder)"
+they collapse onto one line. The user wants these tracked separately so
+filters and matches can reason about each.
+
+**Schema.**
+
+```sql
+ALTER TABLE people ADD COLUMN home_location TEXT;     -- "Berlin, DE"
+ALTER TABLE people ADD COLUMN work_location TEXT;     -- "Boulder, CO" or "Remote / FAR Labs"
+ALTER TABLE people ADD COLUMN work_org TEXT;          -- the org name they work at, separate from `roles`
+```
+
+Keep `geo` for now — backfill into `home_location` on migrate, then
+deprecate it in the ingest write path.
+
+**Pipeline updates.**
+- `extract.ts` EXTRACT_GUIDE: extend the schema with
+  `home_location`, `work_location`, `work_org`, all optional.
+- `people_writes.ts`: write the new fields when present; never
+  blindly overwrite a populated field with a blank one.
+- The Profile header's meta row currently shows `view.person.geo` —
+  swap for two cells: "🏠 home_location" and "💼 work_org @ work_location".
+- The merge reconciliation (`merge_people.ts`) needs to merge these
+  three fields too (longer-of-two rule).
+
+**Backfill.** Reprocess Tom McLeod (and anyone else with split-location
+info already living in their context blob): a one-shot admin endpoint
+`POST /api/admin/refill-locations?ids=<csv>` that re-runs extract on
+their most recent meeting transcript with the new schema. Or simpler,
+run `extract.ts` against each person's existing `context` text via
+`source: 'manual'`.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
