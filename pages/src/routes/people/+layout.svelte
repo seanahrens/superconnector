@@ -29,16 +29,12 @@
   let tagsExpanded = $state(false);
 
   const ROLE_OPTIONS = ['founder', 'funder', 'talent', 'advisor'];
-  const SORT_OPTIONS: Array<{
-    key: SortKey;
-    label: string;
-    icon: 'sparkles' | 'clock' | 'bar-chart-2' | 'grip-vertical' | 'arrow-down-az';
-  }> = [
-    { key: 'magical', label: 'Magical', icon: 'sparkles' },
-    { key: 'recent', label: 'Most recent', icon: 'clock' },
-    { key: 'frequent', label: 'Most frequent', icon: 'bar-chart-2' },
-    { key: 'alpha', label: 'Alphabetical', icon: 'arrow-down-az' },
-    { key: 'custom', label: 'Custom order', icon: 'grip-vertical' },
+  const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
+    { key: 'magical', label: 'Magical' },
+    { key: 'recent', label: 'Most recent' },
+    { key: 'frequent', label: 'Most frequent' },
+    { key: 'alpha', label: 'Alphabetical' },
+    { key: 'custom', label: 'Custom order' },
   ];
 
   async function load() {
@@ -80,6 +76,7 @@
 
 <div class="layout" data-pane={onSubroute ? 'detail' : 'list'}>
   <aside class="sidebar">
+    <div class="sidebar-top">
     <div class="search-wrap">
       <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
       <input
@@ -92,15 +89,9 @@
 
     <div class="sort-row">
       <details class="sort-menu">
-        {#snippet currentLabel()}
-          {#each SORT_OPTIONS.filter((o) => o.key === sort) as cur}
-            <Icon name={cur.icon} size={14} />
-            <span>{cur.label}</span>
-          {/each}
-        {/snippet}
         <summary>
           <Icon name="sort" size={14} />
-          {@render currentLabel()}
+          <span>{SORT_OPTIONS.find((o) => o.key === sort)?.label ?? 'Sort'}</span>
           <Icon name="chevron-down" size={14} />
         </summary>
         <ul class="sort-list" role="listbox">
@@ -115,9 +106,7 @@
                   const d = (e.currentTarget as HTMLElement).closest('details');
                   if (d) d.removeAttribute('open');
                 }}
-              >
-                <Icon name={opt.icon} size={14} /> {opt.label}
-              </button>
+              >{opt.label}</button>
             </li>
           {/each}
         </ul>
@@ -168,27 +157,32 @@
       </div>
     {/if}
 
-    <hr />
-    <PeopleList
-      {items}
-      {loading}
-      {activeId}
-      reorderable={sort === 'custom'}
-      onSelect={(id) => goto(`/people/${id}`)}
-      onReorder={async (movedId, before, after) => {
-        await api.post(`/api/people/${movedId}/reorder`, { before, after });
-        await load();
-      }}
-    />
+    </div><!-- /.sidebar-top -->
 
-    <button
-      class="add-person-btn"
-      onclick={() => (addOpen = true)}
-      aria-label="Add a new person"
-    >
-      <Icon name="plus" size={14} />
-      Add Person
-    </button>
+    <div class="sidebar-list">
+      <PeopleList
+        {items}
+        {loading}
+        {activeId}
+        reorderable={sort === 'custom'}
+        onSelect={(id) => goto(`/people/${id}`)}
+        onReorder={async (movedId, before, after) => {
+          await api.post(`/api/people/${movedId}/reorder`, { before, after });
+          await load();
+        }}
+      />
+    </div>
+
+    <div class="sidebar-foot">
+      <button
+        class="add-person-btn"
+        onclick={() => (addOpen = true)}
+        aria-label="Add a new person"
+      >
+        <Icon name="plus" size={14} />
+        Add Person
+      </button>
+    </div>
   </aside>
 
   <section class="content">
@@ -215,13 +209,28 @@
   .sidebar {
     border-right: 1px solid var(--border);
     background: white;
-    overflow-y: auto;
-    padding: 12px;
-    padding-bottom: 80px;
+    /* Three-row grid: header (auto) / scrollable list (1fr) / footer (auto).
+       Lets the Add Person button sit on the actual bottom edge of the pane,
+       not at the end of a flex column whose height is just its content. */
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 0;
+  }
+  .sidebar-top {
+    padding: 12px 12px 8px;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    position: relative;
+  }
+  .sidebar-list {
+    overflow-y: auto;
+    padding: 0 12px 8px;
+    min-height: 0;
+  }
+  .sidebar-foot {
+    padding: 8px 12px 12px;
+    border-top: 1px solid var(--border);
+    background: white;
   }
   .content { overflow-y: auto; min-height: 0; }
 
@@ -304,10 +313,7 @@
   .filters-toggle:hover { background: var(--hover); color: var(--fg); }
 
   .add-person-btn {
-    position: sticky;
-    bottom: 12px;
-    margin-top: auto;
-    align-self: stretch;
+    width: 100%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -320,24 +326,15 @@
     font: inherit;
     font-weight: 500;
     cursor: pointer;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
-    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
-    z-index: 5;
+    transition: background 120ms ease, border-color 120ms ease;
   }
-  .add-person-btn:hover { background: var(--hover); border-color: var(--muted); transform: translateY(-1px); }
+  .add-person-btn:hover { background: var(--hover); border-color: var(--muted); }
 
   @media (max-width: 720px) {
     .layout { grid-template-columns: 1fr; }
     .layout[data-pane='detail'] .sidebar { display: none; }
     .layout[data-pane='list'] .content { display: none; }
-    .sidebar { border-right: 0; padding-bottom: calc(72px + var(--safe-bottom)); }
-    .add-person-btn {
-      position: fixed;
-      left: 16px;
-      right: 16px;
-      bottom: calc(12px + var(--safe-bottom));
-      align-self: auto;
-      width: auto;
-    }
+    .sidebar { border-right: 0; }
+    .sidebar-foot { padding-bottom: calc(12px + var(--safe-bottom)); }
   }
 </style>
