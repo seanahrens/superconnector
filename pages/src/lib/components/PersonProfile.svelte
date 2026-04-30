@@ -346,6 +346,31 @@
     </section>
   </div>
 
+  <!-- ======================================================== SIGNALS -->
+  <section class="card">
+    <header class="card-hd">
+      <h3><span class="hd-dot signal-dot"></span>Signals</h3>
+    </header>
+    {#if view.recentSignals.length === 0}
+      <p class="muted small empty-line">Nothing extracted yet.</p>
+    {:else}
+      <ul class="signals">
+        {#each view.recentSignals as s}
+          <li class="signal-row">
+            <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
+            <span class="signal-body">{s.body}</span>
+            {#if s.confidence != null}
+              <span class="confidence" title="confidence">
+                <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
+                <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
+              </span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
   <!-- ======================================================== RECENT MEETINGS -->
   <section class="card">
     <header class="card-hd">
@@ -370,31 +395,6 @@
           </li>
         {/each}
       </ol>
-    {/if}
-  </section>
-
-  <!-- ======================================================== SIGNALS -->
-  <section class="card">
-    <header class="card-hd">
-      <h3><span class="hd-dot signal-dot"></span>Signals</h3>
-    </header>
-    {#if view.recentSignals.length === 0}
-      <p class="muted small empty-line">Nothing extracted yet.</p>
-    {:else}
-      <ul class="signals">
-        {#each view.recentSignals as s}
-          <li class="signal-row">
-            <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
-            <span class="signal-body">{s.body}</span>
-            {#if s.confidence != null}
-              <span class="confidence" title="confidence">
-                <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
-                <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
-              </span>
-            {/if}
-          </li>
-        {/each}
-      </ul>
     {/if}
   </section>
 
