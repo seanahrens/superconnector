@@ -29,4 +29,26 @@ app.post('/:id/complete', async (c) => {
   return c.json(out);
 });
 
+// Inline edit of the followup body (or due_date) — not a status change.
+app.patch('/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{ body?: string; due_date?: string | null }>();
+  const sets: string[] = [];
+  const binds: Array<string | null> = [];
+  if (body.body !== undefined) {
+    sets.push(`body = ?${sets.length + 1}`);
+    binds.push(body.body.trim());
+  }
+  if (body.due_date !== undefined) {
+    sets.push(`due_date = ?${sets.length + 1}`);
+    binds.push(body.due_date);
+  }
+  if (sets.length === 0) return c.json({ ok: true });
+  binds.push(id);
+  await c.env.DB.prepare(
+    `UPDATE followups SET ${sets.join(', ')} WHERE id = ?${sets.length + 1}`,
+  ).bind(...binds).run();
+  return c.json({ ok: true });
+});
+
 export default app;

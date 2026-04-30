@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import type { FollowupItem } from '$lib/types';
+  import EditableField from '$components/EditableField.svelte';
+  import { fmtShortDate } from '$lib/dates';
 
   let items = $state<FollowupItem[]>([]);
   let loading = $state(true);
@@ -14,8 +16,12 @@
   }
   $effect(() => { void status; load(); });
 
-  async function complete(id: string, next: 'done' | 'dropped') {
+  async function setStatus(id: string, next: 'open' | 'done' | 'dropped') {
     await api.post(`/api/followups/${id}/complete`, { status: next });
+    await load();
+  }
+  async function saveBody(id: string, body: string) {
+    await api.patch(`/api/followups/${id}`, { body });
     await load();
   }
 </script>
@@ -37,19 +43,29 @@
     <p class="muted">No {status} followups.</p>
   {:else}
     <ul class="list">
-      {#each items as f}
+      {#each items as f (f.id)}
         <li>
           <div class="col">
             <div>
               <a href={`/people/${f.person_id}`}>{f.display_name ?? '(unknown)'}</a>
-              {#if f.due_date}<span class="muted small">due {f.due_date}</span>{/if}
+              {#if f.due_date}<span class="muted small">due {fmtShortDate(f.due_date)}</span>{/if}
             </div>
-            <div>{f.body}</div>
+            <div class="body">
+              <EditableField
+                value={f.body}
+                multiline
+                placeholder="(empty)"
+                label="Edit followup"
+                onSave={(next) => saveBody(f.id, next)}
+              />
+            </div>
           </div>
+          <span class="spacer"></span>
           {#if status === 'open'}
-            <span class="spacer"></span>
-            <button class="btn btn-primary" onclick={() => complete(f.id, 'done')}>done</button>
-            <button class="btn" onclick={() => complete(f.id, 'dropped')}>drop</button>
+            <button class="btn btn-primary" onclick={() => setStatus(f.id, 'done')}>done</button>
+            <button class="btn" onclick={() => setStatus(f.id, 'dropped')}>drop</button>
+          {:else}
+            <button class="btn" onclick={() => setStatus(f.id, 'open')}>re-open</button>
           {/if}
         </li>
       {/each}

@@ -29,12 +29,17 @@ interface ListItem {
 
 app.get('/', async (c) => {
   const url = new URL(c.req.url);
-  const sort = url.searchParams.get('sort') ?? 'magical'; // magical | recent | frequent | custom
+  const sort = url.searchParams.get('sort') ?? 'magical'; // magical | recent | frequent | custom | alpha
   const tagsCsv = url.searchParams.get('tags') ?? '';
   const rolesCsv = url.searchParams.get('roles') ?? '';
   const tagMode = (url.searchParams.get('tag_mode') ?? 'or') as 'and' | 'or';
   const search = url.searchParams.get('q') ?? '';
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 200), 500);
+  // The "Me" person — matched by env.EMAIL_TO — is excluded from the list
+  // by default. Pass include_me=1 to include them (e.g. for the merge
+  // candidate fallback on themselves, though we never want that either).
+  const includeMe = url.searchParams.get('include_me') === '1';
+  const meEmail = (c.env.EMAIL_TO ?? '').toLowerCase().trim();
 
   const tags = tagsCsv ? tagsCsv.split(',').map((t) => t.trim()).filter(Boolean) : [];
   const roles = rolesCsv ? rolesCsv.split(',').map((t) => t.trim()).filter(Boolean) : [];
@@ -56,6 +61,11 @@ app.get('/', async (c) => {
       (p.primary_email && p.primary_email.trim()) ||
       p.meeting_count > 0,
   );
+  // Hide the user's own row by default — they have a dedicated profile
+  // button in the layout footer.
+  if (!includeMe && meEmail) {
+    filtered = filtered.filter((p) => (p.primary_email ?? '').toLowerCase() !== meEmail);
+  }
 
   if (search) {
     const needle = search.toLowerCase();
@@ -127,6 +137,18 @@ app.get('/', async (c) => {
   }));
 
   return c.json({ items, total: filtered.length, sort, tag_mode: tagMode });
+});
+
+// Resolve the "Me" person id by EMAIL_TO. The dedicated profile button in
+// the people layout footer hits this to know where to navigate.
+app.get('/me', async (c) => {
+  const email = (c.env.EMAIL_TO ?? '').toLowerCase().trim();
+  if (!email) return c.json({ error: 'EMAIL_TO not configured' }, 503);
+  const row = await c.env.DB.prepare(
+    'SELECT id FROM people WHERE primary_email = ?1 LIMIT 1',
+  ).bind(email).first<{ id: string }>();
+  if (!row) return c.json({ error: 'not found' }, 404);
+  return c.json({ person_id: row.id });
 });
 
 app.get('/:id', async (c) => {

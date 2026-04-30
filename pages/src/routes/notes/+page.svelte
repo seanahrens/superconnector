@@ -3,6 +3,7 @@
   import type { ConfirmationItem } from '$lib/types';
   import Icon from '$components/Icon.svelte';
   import NoteContent from '$components/NoteContent.svelte';
+  import { fmtShortDate, fmtShortDateTime } from '$lib/dates';
 
   // Payload shapes the backend writes for each queue kind.
   interface NoteForQueue {
@@ -245,14 +246,10 @@
     const p = item.payload as { note?: { created_at?: string } } | undefined;
     return p?.note?.created_at ?? item.created_at;
   }
-  function fmtDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-  function fmtDateTime(iso: string): string {
-    return new Date(iso).toLocaleString(undefined, {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  }
+  // Local aliases — points at the shared formatters so the whole site
+  // renders dates uniformly.
+  const fmtDate = fmtShortDate;
+  const fmtDateTime = fmtShortDateTime;
 
   // Convenience accessors derived from `selected`.
   const isReviewAction = $derived(

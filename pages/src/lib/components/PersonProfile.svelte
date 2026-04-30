@@ -9,6 +9,7 @@
   import PersonAvatar from './PersonAvatar.svelte';
   import ContactRow from './ContactRow.svelte';
   import EditableField from './EditableField.svelte';
+  import { fmtShortDate, fmtShortDateTime } from '$lib/dates';
 
   interface Props {
     view: PersonView;
@@ -82,6 +83,40 @@
     await api.delete(`/api/people/${view.person.id}/tags/${encodeURIComponent(name)}`);
     await onChanged();
   }
+
+  async function removeRole(name: string) {
+    const next = view.roles.filter((r) => r !== name);
+    await api.patch(`/api/people/${view.person.id}`, { roles_set: next });
+    await onChanged();
+  }
+
+  async function removeTrajectory(name: string) {
+    const next = view.trajectoryTags.filter((t) => t !== name);
+    await api.patch(`/api/people/${view.person.id}`, { trajectory_tags_set: next });
+    await onChanged();
+  }
+
+  async function saveFollowupBody(id: string, next: string) {
+    await api.patch(`/api/followups/${id}`, { body: next });
+    await onChanged();
+  }
+
+  // Group signals under the meeting they came from so the timeline reads
+  // as "this happened, here's what we extracted".
+  const signalsByMeeting = $derived.by(() => {
+    const map = new Map<string, typeof view.recentSignals>();
+    const orphans: typeof view.recentSignals = [];
+    for (const s of view.recentSignals) {
+      if (s.meeting_id) {
+        const arr = map.get(s.meeting_id) ?? [];
+        arr.push(s);
+        map.set(s.meeting_id, arr);
+      } else {
+        orphans.push(s);
+      }
+    }
+    return { map, orphans };
+  });
 
   async function completeFollowup(id: string) {
     await api.post(`/api/followups/${id}/complete`, { status: 'done' });
@@ -158,45 +193,47 @@
           />
         </span>
         {#if view.person.geo}<span class="meta-cell">{view.person.geo}</span>{/if}
-        <span class="meta-cell">last met {view.person.last_met_date ?? '—'}</span>
+        <span class="meta-cell">last met {fmtShortDate(view.person.last_met_date)}</span>
         <span class="meta-cell">{view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}</span>
       </div>
-      {#if view.roles.length || view.trajectoryTags.length}
-        <div class="role-row">
-          {#each view.roles as r}<span class="chip role">{r}</span>{/each}
-          {#each view.trajectoryTags as t}<span class="chip trajectory">{t}</span>{/each}
-        </div>
-      {/if}
+      <!-- One unified tag row: roles (filled), trajectory (outlined),
+           free tags (white), with × removals and an inline add input.
+           Replaces the old separate "Tags" card. -->
+      <div class="tagrow">
+        {#each view.roles as r}
+          <span class="chip role">
+            {r}
+            <button class="chip-x" onclick={() => removeRole(r)} aria-label="remove role {r}">×</button>
+          </span>
+        {/each}
+        {#each view.trajectoryTags as t}
+          <span class="chip trajectory">
+            {t}
+            <button class="chip-x" onclick={() => removeTrajectory(t)} aria-label="remove trajectory {t}">×</button>
+          </span>
+        {/each}
+        {#each view.tags as t}
+          <span class="chip tag">
+            {t}
+            <button class="chip-x" onclick={() => removeTag(t)} aria-label="remove tag {t}">×</button>
+          </span>
+        {/each}
+        <input
+          class="tag-input"
+          list="tag-options"
+          bind:value={newTagName}
+          placeholder="add tag…"
+          onkeydown={(e) => e.key === 'Enter' && addTag()}
+        />
+        <datalist id="tag-options">
+          {#each allTags as t}<option value={t.name}></option>{/each}
+        </datalist>
+      </div>
       <div class="contact-slot">
         <ContactRow email={view.person.primary_email} phone={view.person.phone} />
       </div>
     </div>
   </header>
-
-  <!-- ======================================================== TAGS -->
-  <section class="card">
-    <header class="card-hd">
-      <h3><span class="hd-dot tag-dot"></span>Tags</h3>
-    </header>
-    <div class="tagrow">
-      {#each view.tags as t}
-        <span class="chip tag">
-          {t}
-          <button class="chip-x" onclick={() => removeTag(t)} aria-label="remove tag {t}">×</button>
-        </span>
-      {/each}
-      <input
-        class="tag-input"
-        list="tag-options"
-        bind:value={newTagName}
-        placeholder="add tag…"
-        onkeydown={(e) => e.key === 'Enter' && addTag()}
-      />
-      <datalist id="tag-options">
-        {#each allTags as t}<option value={t.name}></option>{/each}
-      </datalist>
-    </div>
-  </section>
 
   <!-- ======================================================== CONTEXT -->
   <section class="card context-card">
@@ -274,19 +311,20 @@
     </section>
   </div>
 
-  <!-- ======================================================== RECENT MEETINGS -->
+  <!-- ===================================== RECENT MEETINGS w/ SIGNALS -->
   <section class="card">
     <header class="card-hd">
       <h3><span class="hd-dot meeting-dot"></span>Recent meetings</h3>
     </header>
-    {#if view.recentMeetings.length === 0}
+    {#if view.recentMeetings.length === 0 && view.recentSignals.length === 0}
       <p class="muted small empty-line">No meetings recorded yet.</p>
     {:else}
       <ol class="timeline">
         {#each view.recentMeetings as m}
+          {@const sigs = signalsByMeeting.map.get(m.id) ?? []}
           <li class="timeline-row">
             <div class="timeline-rail">
-              <span class="datepill">{m.recorded_at.slice(0, 10)}</span>
+              <span class="datepill">{fmtShortDate(m.recorded_at)}</span>
             </div>
             <div class="timeline-body">
               <div class="meeting-meta muted small">
@@ -294,35 +332,54 @@
                 <span>· {m.source}</span>
               </div>
               <div class="meeting-summary">{m.summary ?? 'No summary captured.'}</div>
+              {#if sigs.length > 0}
+                <ul class="signals">
+                  {#each sigs as s}
+                    <li class="signal-row">
+                      <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
+                      <span class="signal-body">{s.body}</span>
+                      {#if s.confidence != null}
+                        <span class="confidence" title="confidence">
+                          <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
+                          <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
+                        </span>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             </div>
           </li>
         {/each}
-      </ol>
-    {/if}
-  </section>
 
-  <!-- ======================================================== SIGNALS -->
-  <section class="card">
-    <header class="card-hd">
-      <h3><span class="hd-dot signal-dot"></span>Signals</h3>
-    </header>
-    {#if view.recentSignals.length === 0}
-      <p class="muted small empty-line">Nothing extracted yet.</p>
-    {:else}
-      <ul class="signals">
-        {#each view.recentSignals as s}
-          <li class="signal-row">
-            <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
-            <span class="signal-body">{s.body}</span>
-            {#if s.confidence != null}
-              <span class="confidence" title="confidence">
-                <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
-                <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
-              </span>
-            {/if}
+        {#if signalsByMeeting.orphans.length > 0}
+          <li class="timeline-row">
+            <div class="timeline-rail">
+              <span class="datepill">manual</span>
+            </div>
+            <div class="timeline-body">
+              <div class="meeting-meta muted small">
+                <span class="chip-mini">other</span>
+                <span>· dictation / chat</span>
+              </div>
+              <ul class="signals">
+                {#each signalsByMeeting.orphans as s}
+                  <li class="signal-row">
+                    <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
+                    <span class="signal-body">{s.body}</span>
+                    {#if s.confidence != null}
+                      <span class="confidence" title="confidence">
+                        <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
+                        <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
+                      </span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
           </li>
-        {/each}
-      </ul>
+        {/if}
+      </ol>
     {/if}
   </section>
 
@@ -354,11 +411,21 @@
         <ul class="followups">
           {#each view.openFollowups as f (f.id)}
             <li class="followup-row">
-              <label class="followup-label">
-                <input type="checkbox" onchange={() => setFollowupStatus(f.id, 'done')} />
-                <span class="followup-body">{f.body}</span>
-              </label>
-              {#if f.due_date}<span class="datepill due">due {f.due_date}</span>{/if}
+              <input
+                type="checkbox"
+                aria-label="mark done"
+                onchange={() => setFollowupStatus(f.id, 'done')}
+              />
+              <span class="followup-body">
+                <EditableField
+                  value={f.body}
+                  multiline
+                  placeholder="(empty)"
+                  label="Edit followup"
+                  onSave={(next) => saveFollowupBody(f.id, next)}
+                />
+              </span>
+              {#if f.due_date}<span class="datepill due">due {fmtShortDate(f.due_date)}</span>{/if}
             </li>
           {/each}
         </ul>
@@ -370,12 +437,23 @@
         <ul class="followups">
           {#each view.closedFollowups as f (f.id)}
             <li class="followup-row done">
-              <label class="followup-label">
-                <input type="checkbox" checked onchange={() => setFollowupStatus(f.id, 'open')} />
-                <span class="followup-body strike">{f.body}</span>
-              </label>
+              <input
+                type="checkbox"
+                checked
+                aria-label="re-open"
+                onchange={() => setFollowupStatus(f.id, 'open')}
+              />
+              <span class="followup-body strike">
+                <EditableField
+                  value={f.body}
+                  multiline
+                  placeholder="(empty)"
+                  label="Edit followup"
+                  onSave={(next) => saveFollowupBody(f.id, next)}
+                />
+              </span>
               {#if f.completed_at}
-                <span class="datepill done-date">{f.status} {f.completed_at.slice(0, 10)}</span>
+                <span class="datepill done-date">{f.status} {fmtShortDate(f.completed_at)}</span>
               {/if}
             </li>
           {/each}

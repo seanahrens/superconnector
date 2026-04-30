@@ -5,6 +5,7 @@
   import PersonProfile from '$components/PersonProfile.svelte';
   import Icon from '$components/Icon.svelte';
   import Skeleton from '$components/Skeleton.svelte';
+  import { bumpPeople } from '$lib/stores';
 
   // The People list / filters / search live in /people/+layout.svelte and
   // persist while you navigate between profiles. This page just renders the
@@ -42,6 +43,9 @@
     const id = $page.params.id;
     if (id) await loadProfile(id);
     await loadTags();
+    // The sidebar list cares about display_name / tags / meeting_count
+    // changes; signal it to refetch.
+    bumpPeople();
   }
 </script>
 

@@ -1,43 +1,46 @@
 <script lang="ts">
-  // Inline click-to-edit. Renders the value as text; clicking the pencil
-  // (or the value, when prop `clickToEdit` is true) swaps in an input
-  // field. Enter saves; Escape cancels. Blur saves to mimic standard text
-  // editor expectations.
+  // Inline click-to-edit. Click the value (or the placeholder when empty) to
+  // enter edit mode. Enter saves on single-line; ⌘+Enter saves on multiline.
+  // Escape cancels. Blur saves to mimic standard inline-edit expectations.
   import Icon from './Icon.svelte';
 
   interface Props {
     value: string | null;
     placeholder?: string;
-    /** Async setter; should write to backend and resolve when done. */
     onSave: (next: string) => void | Promise<void>;
-    /** Override the rendered presentation (e.g. mailto link). */
+    /** Override the rendered presentation (e.g. linkified email). */
     display?: string;
-    /** When true, a click on the value itself enters edit mode (in
-        addition to the explicit pencil button). */
-    clickToEdit?: boolean;
-    /** ARIA label for the pencil button. */
     label?: string;
     type?: 'text' | 'email' | 'tel';
+    multiline?: boolean;
   }
   let {
     value,
     placeholder = 'click to edit',
     onSave,
     display,
-    clickToEdit = false,
     label = 'Edit',
     type = 'text',
+    multiline = false,
   }: Props = $props();
 
   let editing = $state(false);
   let draft = $state('');
   let saving = $state(false);
-  let inputEl: HTMLInputElement | undefined = $state();
+  let inputEl: HTMLInputElement | HTMLTextAreaElement | undefined = $state();
 
   function start() {
     draft = value ?? '';
     editing = true;
-    queueMicrotask(() => inputEl?.select());
+    queueMicrotask(() => {
+      const el = inputEl;
+      if (!el) return;
+      if (typeof (el as HTMLInputElement).select === 'function') {
+        (el as HTMLInputElement).select();
+      } else {
+        el.focus();
+      }
+    });
   }
 
   async function commit() {
@@ -62,37 +65,45 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      void commit();
-    } else if (e.key === 'Escape') {
+    if (e.key === 'Escape') {
       e.preventDefault();
       cancel();
+    } else if (e.key === 'Enter' && (multiline ? (e.metaKey || e.ctrlKey) : !e.shiftKey)) {
+      e.preventDefault();
+      void commit();
     }
   }
 </script>
 
 {#if editing}
-  <span class="wrap editing">
-    <input
-      bind:value={draft}
-      bind:this={inputEl}
-      onkeydown={onKey}
-      onblur={commit}
-      {type}
-      {placeholder}
-      disabled={saving}
-    />
+  <span class="wrap editing" class:multi={multiline}>
+    {#if multiline}
+      <textarea
+        bind:value={draft}
+        bind:this={inputEl}
+        onkeydown={onKey}
+        onblur={commit}
+        {placeholder}
+        disabled={saving}
+        rows="3"
+      ></textarea>
+    {:else}
+      <input
+        bind:value={draft}
+        bind:this={inputEl}
+        onkeydown={onKey}
+        onblur={commit}
+        {type}
+        {placeholder}
+        disabled={saving}
+      />
+    {/if}
   </span>
 {:else}
   <span class="wrap">
-    {#if clickToEdit}
-      <button class="value as-text" onclick={start}>{display ?? value ?? placeholder}</button>
-    {:else if display}
-      <span class="value">{display}</span>
-    {:else}
-      <span class="value" class:muted={!value}>{value ?? placeholder}</span>
-    {/if}
+    <button class="value as-text" class:placeholder={!value && !display} onclick={start} aria-label={label}>
+      {display ?? value ?? placeholder}
+    </button>
     <button class="pencil" onclick={start} aria-label={label} title={label}>
       <Icon name="pencil" size={12} />
     </button>
@@ -100,8 +111,9 @@
 {/if}
 
 <style>
-  .wrap { display: inline-flex; align-items: center; gap: 4px; }
-  .wrap.editing input {
+  .wrap { display: inline-flex; align-items: center; gap: 4px; vertical-align: baseline; }
+  .wrap.editing input,
+  .wrap.editing textarea {
     font: inherit;
     color: inherit;
     background: white;
@@ -109,6 +121,16 @@
     border-radius: 6px;
     padding: 2px 6px;
     min-width: 220px;
+  }
+  .wrap.editing.multi {
+    display: flex;
+    width: 100%;
+  }
+  .wrap.editing.multi textarea {
+    width: 100%;
+    line-height: 1.5;
+    padding: 6px 8px;
+    resize: vertical;
   }
   .value.as-text {
     background: none;
@@ -119,8 +141,8 @@
     cursor: text;
     text-align: left;
   }
+  .value.placeholder { color: var(--muted); cursor: pointer; }
   .value.as-text:hover { background: var(--hover); border-radius: 4px; box-shadow: 0 0 0 4px var(--hover); }
-  .value.muted { color: var(--muted); }
   .pencil {
     display: inline-flex;
     align-items: center;

@@ -12,6 +12,7 @@
   import Icon from '$components/Icon.svelte';
   import SegmentedToggle from '$components/SegmentedToggle.svelte';
   import AddPersonModal from '$components/AddPersonModal.svelte';
+  import { peopleRefresh } from '$lib/stores';
 
   let { children } = $props();
 
@@ -54,10 +55,11 @@
   $effect(() => { void [sort, tags, roles, tagMode, q]; load(); });
   $effect(() => { loadTags(); });
 
-  // Re-pull the list whenever the route under /people changes — e.g. after
-  // the AddPersonModal navigates to /people/<new-id>, the new person needs
-  // to appear in the sidebar without a refresh.
-  $effect(() => { void $page.url.pathname; void load(); });
+  // Refresh the list explicitly when downstream mutations bump the
+  // peopleRefresh store (add person, merge, rename, delete, etc.).
+  // Avoids re-fetching on every navigation, which caused a list flash
+  // when picking a profile.
+  $effect(() => { void $peopleRefresh; void load(); });
 
   function toggleTag(name: string) {
     tags = tags.includes(name) ? tags.filter((t) => t !== name) : [...tags, name];
@@ -77,6 +79,17 @@
   const onSubroute = $derived($page.url.pathname !== '/people');
 
   let addOpen = $state(false);
+
+  let meId = $state<string | null>(null);
+  $effect(() => { void loadMe(); });
+  async function loadMe() {
+    try {
+      const r = await api.get<{ person_id: string }>('/api/people/me');
+      meId = r.person_id;
+    } catch {
+      meId = null;
+    }
+  }
 
   // When the user lands on /people exactly (no subroute), auto-redirect
   // them to the top person in the current list. Skips the hollow
@@ -195,6 +208,17 @@
     </div>
 
     <div class="sidebar-foot">
+      {#if meId}
+        <a
+          href={`/people/${meId}`}
+          class="me-btn"
+          class:active={activeId === meId}
+          aria-label="Open my profile"
+          title="My profile"
+        >
+          <Icon name="users" size={16} />
+        </a>
+      {/if}
       <button
         class="add-person-btn"
         onclick={() => (addOpen = true)}
@@ -252,7 +276,25 @@
     padding: 8px 12px 12px;
     border-top: 1px solid var(--border);
     background: white;
+    display: flex;
+    gap: 8px;
+    align-items: center;
   }
+  .me-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--muted);
+    background: white;
+    text-decoration: none;
+  }
+  .me-btn:hover { background: var(--hover); color: var(--fg); text-decoration: none; }
+  .me-btn.active { color: var(--accent); border-color: var(--accent); background: rgba(67, 56, 202, 0.06); }
   .content { overflow-y: auto; min-height: 0; }
 
   .filters { display: flex; flex-direction: column; gap: 6px; }

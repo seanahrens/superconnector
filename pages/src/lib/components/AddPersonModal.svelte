@@ -7,6 +7,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { ulid } from '$lib/ulid';
+  import { bumpPeople } from '$lib/stores';
   import Icon from './Icon.svelte';
 
   interface Props {
@@ -49,6 +50,7 @@
       if (!createdId) {
         throw new Error('No person was created. Try giving more identifying info.');
       }
+      bumpPeople();
       onClose();
       void goto(`/people/${createdId}`);
     } catch (err) {
