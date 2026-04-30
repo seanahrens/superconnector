@@ -60,6 +60,15 @@ export interface PersonView {
     due_date: string | null;
     status: string;
     created_at: string;
+    completed_at?: string | null;
+  }>;
+  closedFollowups: Array<{
+    id: string;
+    body: string;
+    due_date: string | null;
+    status: string;
+    created_at: string;
+    completed_at?: string | null;
   }>;
 }
 

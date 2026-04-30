@@ -24,7 +24,7 @@ app.post('/', async (c) => {
 
 app.post('/:id/complete', async (c) => {
   const id = c.req.param('id');
-  const body = await c.req.json<{ status: 'done' | 'dropped' }>();
+  const body = await c.req.json<{ status: 'done' | 'dropped' | 'open' }>();
   const out = await runTool(c.env, 'complete_followup', { id, status: body.status });
   return c.json(out);
 });

@@ -88,6 +88,13 @@
     await onChanged();
   }
 
+  async function setFollowupStatus(id: string, status: 'open' | 'done' | 'dropped') {
+    await api.post(`/api/followups/${id}/complete`, { status });
+    await onChanged();
+  }
+
+  let followupTab = $state<'open' | 'done'>('open');
+
   // Pull a date marker like "[2026-04-30]" off the front of context so we can
   // render it as a chip rather than inline text.
   function splitDateMarker(s: string | null): { date: string | null; rest: string } {
@@ -322,22 +329,58 @@
   <!-- ======================================================== FOLLOWUPS -->
   <section class="card">
     <header class="card-hd">
-      <h3><span class="hd-dot followup-dot"></span>Open followups</h3>
+      <h3><span class="hd-dot followup-dot"></span>Followups</h3>
+      <span class="spacer"></span>
+      <div class="followup-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={followupTab === 'open'}
+          class:active={followupTab === 'open'}
+          onclick={() => (followupTab = 'open')}
+        >Open <span class="count">{view.openFollowups.length}</span></button>
+        <button
+          role="tab"
+          aria-selected={followupTab === 'done'}
+          class:active={followupTab === 'done'}
+          onclick={() => (followupTab = 'done')}
+        >Completed <span class="count">{view.closedFollowups.length}</span></button>
+      </div>
     </header>
-    {#if view.openFollowups.length === 0}
-      <p class="muted small empty-line">Nothing pending.</p>
+
+    {#if followupTab === 'open'}
+      {#if view.openFollowups.length === 0}
+        <p class="muted small empty-line">Nothing pending.</p>
+      {:else}
+        <ul class="followups">
+          {#each view.openFollowups as f (f.id)}
+            <li class="followup-row">
+              <label class="followup-label">
+                <input type="checkbox" onchange={() => setFollowupStatus(f.id, 'done')} />
+                <span class="followup-body">{f.body}</span>
+              </label>
+              {#if f.due_date}<span class="datepill due">due {f.due_date}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {:else}
-      <ul class="followups">
-        {#each view.openFollowups as f}
-          <li class="followup-row">
-            <label class="followup-label">
-              <input type="checkbox" onchange={() => completeFollowup(f.id)} />
-              <span class="followup-body">{f.body}</span>
-            </label>
-            {#if f.due_date}<span class="datepill due">due {f.due_date}</span>{/if}
-          </li>
-        {/each}
-      </ul>
+      {#if view.closedFollowups.length === 0}
+        <p class="muted small empty-line">No completed followups yet.</p>
+      {:else}
+        <ul class="followups">
+          {#each view.closedFollowups as f (f.id)}
+            <li class="followup-row done">
+              <label class="followup-label">
+                <input type="checkbox" checked onchange={() => setFollowupStatus(f.id, 'open')} />
+                <span class="followup-body strike">{f.body}</span>
+              </label>
+              {#if f.completed_at}
+                <span class="datepill done-date">{f.status} {f.completed_at.slice(0, 10)}</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {/if}
   </section>
 
@@ -636,6 +679,39 @@
   .followup-label input { margin-top: 3px; }
   .followup-body { flex: 1; line-height: 1.45; }
   .due { background: rgba(217, 119, 6, 0.1); color: #b45309; border-color: rgba(217, 119, 6, 0.25); }
+  .done-date { background: rgba(22, 163, 74, 0.10); color: #15803d; border-color: rgba(22, 163, 74, 0.25); text-transform: capitalize; }
+  .followup-row.done { background: rgba(22, 163, 74, 0.04); }
+  .strike { text-decoration: line-through; color: var(--muted); }
+  .followup-tabs {
+    display: inline-flex;
+    background: var(--hover);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .followup-tabs button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .followup-tabs button.active { background: white; color: var(--fg); box-shadow: 0 1px 1px rgba(0,0,0,0.04); }
+  .followup-tabs .count {
+    font-size: 10px;
+    background: rgba(0,0,0,0.05);
+    padding: 1px 6px;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+  .followup-tabs button.active .count { background: rgba(67, 56, 202, 0.10); color: var(--accent); }
 
   /* ──────────────────────────────────────────── shared bits */
   .datepill {

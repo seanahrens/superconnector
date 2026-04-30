@@ -28,24 +28,26 @@ export const addFollowupTool: Tool<
 };
 
 export const completeFollowupTool: Tool<
-  { id: string; status: 'done' | 'dropped' },
+  { id: string; status: 'done' | 'dropped' | 'open' },
   { ok: true }
 > = {
   name: 'complete_followup',
-  description: 'Mark a followup as done or dropped.',
+  description: 'Mark a followup as done, dropped, or re-open it ("uncomplete").',
   inputSchema: {
     type: 'object',
     properties: {
       id: { type: 'string' },
-      status: { type: 'string', enum: ['done', 'dropped'] },
+      status: { type: 'string', enum: ['done', 'dropped', 'open'] },
     },
     required: ['id', 'status'],
     additionalProperties: false,
   },
   async handler(env, input) {
+    // When re-opening, clear the completed_at timestamp.
+    const completedAt = input.status === 'open' ? null : nowIso();
     await env.DB.prepare(
       `UPDATE followups SET status = ?1, completed_at = ?2 WHERE id = ?3`,
-    ).bind(input.status, nowIso(), input.id).run();
+    ).bind(input.status, completedAt, input.id).run();
     return { ok: true } as const;
   },
 };

@@ -15,6 +15,7 @@ export interface PersonView {
   recentMeetings: MeetingRow[];
   recentSignals: SignalRow[];
   openFollowups: FollowupRow[];
+  closedFollowups: FollowupRow[];
 }
 
 export async function loadPersonView(
@@ -44,6 +45,13 @@ export async function loadPersonView(
     `SELECT * FROM followups WHERE person_id = ?1 AND status = 'open' ORDER BY due_date NULLS LAST, created_at`,
   ).bind(personId).all<FollowupRow>();
 
+  const closedFollowupsRes = await env.DB.prepare(
+    `SELECT * FROM followups
+       WHERE person_id = ?1 AND status IN ('done', 'dropped')
+       ORDER BY completed_at DESC NULLS LAST, created_at DESC
+       LIMIT 50`,
+  ).bind(personId).all<FollowupRow>();
+
   return {
     person,
     roles: parseJsonArray(person.roles),
@@ -54,6 +62,7 @@ export async function loadPersonView(
     recentMeetings: meetingsRes.results ?? [],
     recentSignals: signalsRes.results ?? [],
     openFollowups: followupsRes.results ?? [],
+    closedFollowups: closedFollowupsRes.results ?? [],
   };
 }
 
