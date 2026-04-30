@@ -909,6 +909,78 @@ applicable channel for the person:
 
 ---
 
+## O. D1 backup + restore — cheap layered insurance
+
+**Why.** Right now the people graph + meetings + transcripts live in one
+Cloudflare D1 database with no backup story spelled out. A bad migration,
+a destructive `DELETE` from the chat tool, or platform corruption could
+wipe months of work. Cloudflare provides bookmarks and Time Travel
+out of the box, but it's worth wiring an explicit weekly snapshot too.
+
+**Three layers (free → near-free).**
+
+1. **Cloudflare D1 Time Travel — built in.** Every D1 database can be
+   restored to any point in the last 30 days (free plan) without
+   pre-arranging snapshots. Two commands:
+
+   ```bash
+   # See available bookmarks (timestamps you can restore to):
+   npx wrangler d1 time-travel info superconnector --remote
+   # Roll back to a specific UTC time:
+   npx wrangler d1 time-travel restore superconnector --timestamp=2026-04-29T12:00:00Z --remote
+   ```
+
+   No setup needed. Cost: $0. Coverage: any single bad migration / bug
+   / "I just dropped that column" in the last 30 days.
+
+2. **Weekly SQL export to R2 — ~$0/month at our scale.** Free R2 tier
+   is 10GB storage / 1M Class A ops/month; a SQL dump of this DB is
+   tens of KB, well inside that. Add a Worker cron + small script:
+
+   ```ts
+   // src/cron/backup.ts (new)
+   const sql = await env.DB.prepare("SELECT sql FROM sqlite_master").all();
+   // Plus: dump every table via wrangler-style "EXPORT" — D1 has an
+   // export endpoint, but worker-side we iterate `SELECT * FROM` for
+   // each user table and emit INSERTs. ~50 lines.
+   const key = `superconnector/backups/${new Date().toISOString().slice(0,10)}.sql`;
+   await env.BACKUPS.put(key, dumpSql);
+   ```
+
+   Add `[[r2_buckets]]` binding to wrangler.toml. New cron trigger
+   `0 9 * * 0` (Sunday 09:00 UTC) — keep total cron triggers ≤ 5 to
+   stay on the existing tier. Retention: 12 weeks (delete older
+   keys at the end of each run). Total storage <1MB.
+
+3. **Manual one-shot before risky migrations** — already supported via
+   `wrangler d1 export superconnector --remote --output=backups/pre_$(date +%F).sql`.
+   Document this in CLAUDE.md so any agent running a migration runs
+   the export first.
+
+**Restore drill (do this once now).** Take a backup with the manual
+command, then `wrangler d1 execute --remote --command='CREATE TABLE
+__test_restore (x INT); INSERT INTO __test_restore VALUES (1);'`,
+verify the row, then run a Time Travel restore back to before the
+test. Confirms the path works before we actually need it.
+
+**Adjacent: chat-tool guardrails.** The MCP/chat exposes
+`query_db_readonly` (refuses write keywords) and `update_person`,
+but not `DELETE FROM ...`. Audit `src/tools/*` once and confirm
+nothing exposes raw write SQL. The vector store re-embed path can
+recover from a re-ingest, so it's not on the critical path.
+
+**Touch points.**
+- CLAUDE.md — add a "Backups" section pointing at the three layers
+  and the manual command before migrations.
+- src/cron/backup.ts (new) — weekly export-to-R2 worker.
+- wrangler.toml — `[[r2_buckets]]` binding, new cron trigger.
+- worker-configuration.d.ts — typed `BACKUPS: R2Bucket` binding.
+
+**Cost.** $0/mo on the current plan (R2 free tier covers; 5 cron
+trigger cap not exceeded; D1 free plan covers Time Travel).
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
