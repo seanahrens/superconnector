@@ -465,6 +465,76 @@ proposals on the right with no explanation of either. UX issues:
 
 ---
 
+## G1. Notes detail: tabbed Summary / Transcript, consistent across tabs
+
+The detail pane on `/notes` should show the same Granola note content no
+matter which tab a note came from (Needs review, Processed, Dismissed) —
+right now Processed shows nothing meaningful and Dismissed shows the
+classifier-time payload (which omits the full transcript).
+
+**Goal.**
+
+- New "Note" section on the detail pane with two sub-tabs:
+  - **Summary** (default) — Granola's meeting summary
+    (`note.summary`).
+  - **Transcript** — the full diarized transcript
+    (`meetings.transcript`, or fetched live via the Granola API for
+    queue items where we only stashed a 1500-char preview).
+- Both views in a scrollable container, fixed max-height (~50vh) so
+  the detail pane stays browsable.
+- The same component renders for all three tab states so the UX is
+  uniform. Re-fetch full content from Granola if the queue payload
+  doesn't have it.
+
+**Touch points.**
+- `pages/src/routes/notes/+page.svelte` — replace the inline summary +
+  transcript-preview blocks with a `<NoteContent>` component that takes
+  `{noteId, summary, transcript}` and lazily fills missing fields by
+  hitting a new endpoint.
+- `src/api/queue.ts` (or a new `src/api/notes.ts`) — `GET
+  /api/notes/:source_ref` returning `{summary, transcript}` from
+  Granola, used by the detail pane when only a preview is on hand.
+- The Processed tab currently shows a static "Tap a row…" placeholder;
+  selecting a processed row should open this same detail view rather
+  than navigating straight to the person.
+
+**Gotchas.**
+- Dismissed queue items only have a 1.5K transcript preview in their
+  payload. Re-fetch from Granola for those (note id is in the
+  payload).
+- Transcript can be long. Render with `white-space: pre-wrap` and a
+  fixed-height scroll region.
+
+---
+
+## G2. Notes left-pane date = meeting date, not classification date
+
+The left list currently shows `created_at` of the queue row (which is
+when ingest classified it — almost always today's date for the user's
+backlog). Show the date of the actual meeting instead so the list reads
+as a chronology of meetings.
+
+- For pending/dismissed queue items: use
+  `payload.note.created_at` (Granola note timestamp ≈ meeting time)
+  rather than the queue row's `created_at`.
+- For processed items: use `meetings.recorded_at` (already what
+  `/api/queue/processed` returns).
+
+Sort the lists by meeting date descending so the freshest real
+conversations float to the top. Falls back to queue `created_at` only
+if the note timestamp is missing.
+
+**Touch points.**
+- `pages/src/routes/notes/+page.svelte` — adjust `listLabel` /
+  `fmtDate` callsites to read `payload.note.created_at` (with a
+  helper `meetingDate(item)` that picks the right field per kind).
+- Optionally also reorder the lists by `meetingDate` descending; the
+  API currently orders by queue `created_at`. Either sort
+  client-side after the fetch, or add `?sort=meeting_date` to the
+  list endpoint.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
