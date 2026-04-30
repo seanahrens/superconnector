@@ -739,6 +739,79 @@ transcripts this means scrolling past hundreds of lines just to act.
 
 ---
 
+## L. Eliminate loading-induced layout shifts
+
+**Why.** Multiple pages currently render an empty/null state, then jump
+when data lands. CLS hurts both feel and "did I just misclick?"
+moments — most visible on:
+
+- `/people/[id]` — `view = null` shows a small "Loading…" line, then
+  the full profile (header, sections, chatbox) snaps in.
+- `/people` and `/notes` — sidebar shows "loading…" then a list of N
+  rows, jumping the layout.
+- `/notes` detail pane — switching between items resizes content
+  panels (different transcript lengths, summary present/absent).
+- Master chat drawer — recent-threads list loads async; the empty
+  state sits there briefly before the list materializes.
+- Tabs counts (`Needs review 16`) appear after counts load — the
+  zero/N flip is visible if you watch for it.
+
+**Goal.** Reserve space ahead of time. The page should look
+structurally the same on first paint as on data-loaded paint, even
+when fields are blank.
+
+**Concrete fixes per surface.**
+
+1. **`PersonProfile`** — render the section skeleton (Tags, Context,
+   Needs/Offers, Recent meetings, Signals, Followups, Chat) even when
+   `view` is null. Each section becomes a fixed-height placeholder
+   with a subtle pulse. Use a small `<Skeleton h="…" />` component or
+   inline a `min-height` per section.
+
+2. **`pages/src/routes/people/[id]/+page.svelte`** — drop the
+   `view = null; view = await api.get(...)` flicker. Keep the
+   previous `view` in place while the new one loads (or render the
+   skeleton on first load only).
+
+3. **People / Notes lists** — render N skeleton rows
+   (`min-height: 56px` ×, say, 8) while loading. Avoids the "loading…"
+   text → list jump.
+
+4. **Notes detail content panel** — wrap the right pane in a fixed
+   `min-height` container so picking a short item doesn't shrink the
+   pane below the fold and jump the scroll position.
+
+5. **Tabs counts** — initialize `counts = {pending: -, processed: -,
+   dismissed: -}` and render the chip with a non-breaking space or a
+   thin "—" placeholder until real numbers arrive. Pre-loaded width
+   keeps the tab buttons from re-flowing.
+
+6. **Master chat drawer** — render a skeleton list of 3 rows in the
+   "Recent threads" slot while `loading` is true, instead of switching
+   from "Loading recent threads…" text to a list.
+
+7. **Topbar nav active marker** — the route doesn't change but the
+   underline pseudo-element appears on hydration; verify with the
+   `prefers-reduced-motion` check that there's no animated transition
+   that makes the underline appear to pop in late.
+
+**Quick wins to ship first.**
+
+- Add `min-height` reservations on the `.content` containers in
+  `/people/[id]` (profile pane), `/notes` (detail pane), and the
+  master-chat drawer body.
+- Replace inline "loading…" text strings with stable-height skeleton
+  blocks.
+
+A small `<Skeleton>` component (`pages/src/lib/components/Skeleton.svelte`)
+with a CSS pulse animation handles the rest.
+
+**How to verify.** Open Chrome DevTools → Rendering → "Layout Shift
+Regions" overlay, then navigate around. Anything still highlighted
+goes on the punch list.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
