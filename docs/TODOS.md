@@ -535,6 +535,104 @@ if the note timestamp is missing.
 
 ---
 
+## H. People list — alphabetical sort
+
+Add an `Alphabetical` option to the sort dropdown in
+`pages/src/routes/people/+page.svelte`. Server side
+(`src/api/people.ts`) needs a corresponding `sort=alpha` branch that
+orders by `LOWER(display_name) ASC NULLS LAST`. Pair with TODO C (sort
+icons): use `arrow-down-a-z` (or `align-left`) for the alpha option.
+
+---
+
+## I. People profile — "Merge with" action
+
+**Why.** Granola+queue resolution will create duplicates: the same
+person under their first name only, under a slightly different email
+("alex@x.com" and "alex.smith@x.com"), or a typo. Need a quick path to
+fold one record into another without going to SQL.
+
+**Goal.**
+
+A "Merge with…" button on `PersonProfile.svelte`. Clicking opens a
+modal that:
+
+1. **Lists up to 10 ranked merge candidates** for this person, plus a
+   search box, plus an alphabetical-by-name fallback list of all people
+   if the user wants to pick someone the heuristic missed.
+2. **Side-by-side preview** when a candidate is selected: left column =
+   the person we're acting on (kept), right column = the candidate
+   (folded into the left). Shows display_name, primary_email, aliases,
+   roles, trajectory_tags, last_met_date, meeting_count, tags.
+3. **Confirm modal** before performing the merge.
+4. **Backend** does the merge via an LLM-assisted reconciliation pass:
+   pick the longer/more-complete value for each field, union arrays
+   (roles, aliases, tags), reparent meetings/signals/followups/
+   chat_threads to the kept id, then delete the donor row.
+
+**Candidate ranking heuristics (no LLM, regex-only).** Score each
+non-self person 0..100 and take top 10:
+
+- **Local-part match:** if both have email and the part before `@`
+  matches case-insensitively (e.g. `alex@a.com` ↔ `alex@b.com`) → +60.
+- **Email-prefix match (5+ chars):** local-parts share a prefix of 5+
+  chars (`alex` ↔ `alex.smith`) → +30, longer matches score higher.
+- **Domain match** (`@b.com` ↔ `@b.com`) → +5.
+- **First-name exact match** (case-insensitive) → +40.
+- **Last-name exact match** when both have a last name → +25.
+- **Single-name vs full-name:** if one display_name is one token and
+  matches the first or last token of the other → +30 (the canonical
+  "Alex" + "Alex Smith" case the user described).
+- **Levenshtein distance ≤ 2** on the lowercased full name → +20.
+- **Email matches an entry in `aliases`** → +50.
+- Drop candidates with score < 25.
+
+Result: dedupe by id, sort by score desc, return up to 10. The full
+people list (alphabetical) is shown below the candidates so the user
+can fall back to picking by hand.
+
+**Backend merge endpoint.** New `POST /api/people/:keepId/merge`,
+body `{ donor_id }`. Steps inside a single D1 batch:
+
+```
+UPDATE meetings        SET person_id = keep WHERE person_id = donor;
+UPDATE signals         SET person_id = keep WHERE person_id = donor;
+UPDATE followups       SET person_id = keep WHERE person_id = donor;
+UPDATE person_tags     SET person_id = keep WHERE person_id = donor
+  ON CONFLICT(person_id, tag_id) DO NOTHING;
+UPDATE chat_threads    SET person_id = keep WHERE person_id = donor;
+```
+
+Then merge the rows themselves — for this *do* call Haiku with both
+person rows JSON'd up and the rule "produce the most complete
+resulting record; never overwrite manual_override fields; union all
+arrays". Cheap, one-shot. Apply the result with `update_person`.
+
+Re-embed the kept person's vector since context changed.
+
+**Touch points.**
+- `src/lib/merge_people.ts` — new helper: rank candidates + perform
+  merge.
+- `src/api/people.ts` — `GET /api/people/:id/merge-candidates`,
+  `POST /api/people/:id/merge`.
+- `pages/src/lib/components/PersonProfile.svelte` — "Merge with…"
+  button.
+- `pages/src/lib/components/MergeModal.svelte` — new component:
+  ranked candidates, search, alpha list, side-by-side preview,
+  confirm.
+
+**Gotchas.**
+- Don't allow merging a person into themselves.
+- `chat_threads` reparent might conflict if both ids already have
+  threads — that's fine, we keep both threads under the new id.
+- `meeting_count` on the kept row needs recomputing after merge:
+  `UPDATE people SET meeting_count = (SELECT COUNT(*) FROM meetings
+  WHERE person_id = ?) WHERE id = ?`.
+- The merge is destructive (donor row goes away). Confirm modal must
+  be a real modal, not a `confirm()` dialog.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
