@@ -3,6 +3,10 @@ main = ".svelte-kit/cloudflare/_worker.js"
 compatibility_date = "2026-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Keep the workers.dev preview URL alive alongside the custom domain so
+# bookmarks don't break during the migration.
+workers_dev = true
+
 [assets]
 directory = ".svelte-kit/cloudflare"
 binding = "ASSETS"
@@ -18,3 +22,10 @@ enabled = true
 [[services]]
 binding = "WORKER_API"
 service = "superconnector"
+
+# Custom domain — Cloudflare auto-provisions the DNS record and TLS cert
+# for this zone. The apex (mapendar.com) is fine alongside Email Routing on
+# the same zone since Workers routes are HTTP-only and don't touch MX.
+[[routes]]
+pattern = "mapendar.com"
+custom_domain = true
