@@ -16,6 +16,7 @@ import { resolvePerson } from '../lib/resolve';
 import { extractFromMeeting } from '../lib/extract';
 import { applyExtractionResult } from '../lib/people_writes';
 import { materializeFromGranolaNote } from '../lib/queue_resolve';
+import { recordDisposition, type Disposition } from '../lib/ingest_log';
 import { ulid, nowIso } from '../lib/ulid';
 
 const SOURCE = 'granola';
@@ -98,6 +99,30 @@ export async function runIngest(
 
 type ProcessOutcome = 'processed' | 'reprocessed' | 'skipped';
 
+async function logDisposition(
+  env: Env,
+  note: GranolaNote,
+  disposition: Disposition,
+  reason: string | null,
+  meetingId: string | null,
+  personId: string | null,
+): Promise<void> {
+  try {
+    await recordDisposition(env, {
+      source: SOURCE,
+      source_ref: note.id,
+      disposition,
+      note_title: note.title ?? null,
+      note_created_at: note.created_at ?? null,
+      reason,
+      meeting_id: meetingId,
+      person_id: personId,
+    });
+  } catch (err) {
+    console.error('ingest_log write failed', { noteId: note.id, err: (err as Error).message });
+  }
+}
+
 async function processNote(
   env: Env,
   note: GranolaNote,
@@ -105,8 +130,12 @@ async function processNote(
   contentHash: string,
 ): Promise<ProcessOutcome> {
   // Solo notes (personal brainstorming, no other attendees, no calendar event)
-  // shouldn't enter the people graph at all — skip silently.
-  if (isSoloNote(note, env.EMAIL_TO ?? null)) return 'skipped';
+  // shouldn't enter the people graph at all — skip silently but log so the
+  // user can see what was filtered.
+  if (isSoloNote(note, env.EMAIL_TO ?? null)) {
+    await logDisposition(env, note, 'skipped_solo', 'no other attendees and no calendar event', null, null);
+    return 'skipped';
+  }
 
   // Prefer Granola's own calendar_event.attendees when present (high confidence,
   // attribution from the meeting source). Fall back to ICS time-window match.
@@ -162,6 +191,7 @@ async function processNote(
 
   if (vote.classification === 'group') {
     console.log('ingest: skip group via vote', { noteId: note.id, reason: vote.reason });
+    await logDisposition(env, note, 'skipped_group', vote.reason, null, null);
     return 'skipped';
   }
 
@@ -178,6 +208,7 @@ async function processNote(
         personId: result.personId,
         reason: vote.reason,
       });
+      await logDisposition(env, note, 'processed', vote.reason, result.meetingId, result.personId);
       return 'processed';
     } catch (err) {
       // Fall through to the LLM path / queue if materialization fails (e.g.
@@ -196,7 +227,10 @@ async function processNote(
     attendees,
   });
 
-  if (cls.classification === 'group') return 'skipped';
+  if (cls.classification === 'group') {
+    await logDisposition(env, note, 'skipped_group', cls.reason ?? 'classifier said group', null, null);
+    return 'skipped';
+  }
 
   // Stash a compact view of the note for the queue UI (no embedded transcript array).
   const noteForQueue = {
@@ -214,6 +248,7 @@ async function processNote(
       `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
        VALUES (?1, 'meeting_classification', ?2, 'pending', ?3)`,
     ).bind(
+      // queued via meeting_classification
       ulid(),
       JSON.stringify({
         note: noteForQueue,
@@ -223,6 +258,7 @@ async function processNote(
       }),
       nowIso(),
     ).run();
+    await logDisposition(env, note, 'queued', `meeting_classification: ${cls.reason}`, null, null);
     return 'processed';
   }
 
@@ -243,6 +279,7 @@ async function processNote(
       }),
       nowIso(),
     ).run();
+    await logDisposition(env, note, 'queued', 'person_resolution: no attendee info', null, null);
     return 'processed';
   }
 
@@ -263,6 +300,7 @@ async function processNote(
       }),
       nowIso(),
     ).run();
+    await logDisposition(env, note, 'queued', 'person_resolution: ambiguous candidates', null, null);
     return 'processed';
   }
 
@@ -327,6 +365,7 @@ async function processNote(
   });
 
   await applyExtractionResult(env, { personId: resolved.personId, meetingId, result });
+  await logDisposition(env, note, 'processed', 'classifier 1:1 path', meetingId, resolved.personId);
   return 'processed';
 }
 

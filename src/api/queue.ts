@@ -16,6 +16,30 @@ app.get('/', async (c) => {
   return c.json(out);
 });
 
+// "Skipped" view: rows from the ingest_log where ingest decided NOT to
+// process the note (solo, group, or errored). Lets the user see what would
+// otherwise be silently dropped.
+app.get('/skipped', async (c) => {
+  const url = new URL(c.req.url);
+  const limit = Math.min(Number(url.searchParams.get('limit') ?? 200), 500);
+  const rows = await c.env.DB.prepare(
+    `SELECT source, source_ref AS note_id, disposition, note_title, note_created_at, reason, updated_at
+       FROM ingest_log
+      WHERE disposition IN ('skipped_solo', 'skipped_group', 'errored')
+      ORDER BY COALESCE(note_created_at, updated_at) DESC
+      LIMIT ?1`,
+  ).bind(limit).all<{
+    source: string;
+    note_id: string;
+    disposition: string;
+    note_title: string | null;
+    note_created_at: string | null;
+    reason: string | null;
+    updated_at: string;
+  }>();
+  return c.json({ items: rows.results ?? [] });
+});
+
 // "Processed" view for the Notes tab: meetings successfully ingested, joined
 // with the resolved person. One row per meeting, newest first.
 app.get('/processed', async (c) => {

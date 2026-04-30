@@ -812,6 +812,103 @@ goes on the punch list.
 
 ---
 
+## M. Person avatars — automated, no upload required
+
+**Why.** A personless people list is hard to scan. Photos give faces.
+
+**Cascade (cheap → less cheap, all server-side):**
+
+1. **Gravatar.** Hash `lower(trim(primary_email))` with MD5 and request
+   `https://www.gravatar.com/avatar/<hash>?s=128&d=404`. The `d=404`
+   param means Gravatar returns 404 (rather than a default silhouette)
+   when there's no account, so we know to fall through. Free, fast,
+   coverage is patchy but ~30% in tech circles.
+2. **Granola owner photo.** When ingest sees a Granola
+   `calendar_event.attendees[i]` with a photo URL (Granola sometimes
+   surfaces Google avatars for organizer/attendees), stash it on the
+   person row.
+3. **DiceBear initials avatar** as the deterministic fallback —
+   `https://api.dicebear.com/9.x/initials/svg?seed=<name>` returns a
+   coloured circle with the person's initials. No account required,
+   fully automated, unique per name.
+4. **Local fallback** if all of the above fail or we want zero
+   third-party calls: render an SVG client-side with the first
+   letter of the display name, color seeded from `id` for stable
+   per-person colors.
+
+**Pipeline.**
+
+- Add `avatar_url TEXT` and `avatar_source TEXT` columns to `people`
+  (migration). Populated lazily on first profile view: a
+  `GET /api/people/:id/avatar` endpoint returns the URL (and caches
+  the resolved choice on the row).
+- A worker cron (or just call-on-fetch) that walks people without an
+  avatar and runs the cascade. Cap requests to gravatar at ~5/s to
+  stay polite.
+- LinkedIn: avoid. The public API is gated and scraping their CDN is
+  brittle and against TOS. Mention only in this doc; do not implement.
+
+**UI.**
+
+- `<PersonAvatar person={...} size={32} />` component. Tries
+  `person.avatar_url`; on `<img>` error, swaps to the local
+  initials-in-a-circle SVG so empty cards never flash. Used in
+  the people list, profile header, and merge candidate cards.
+
+**Privacy.**
+
+- Don't transmit user emails to a third party in URLs. Gravatar uses
+  the MD5 hash, which is fine. DiceBear takes a name seed (also fine
+  — the name is already on screen). LinkedIn etc. are out.
+
+---
+
+## N. Person page: mailto:, Signal, iMessage links
+
+**Why.** The fastest action after reading a person's profile is "send
+them a quick note". A row of platform shortcuts removes the
+copy-paste-switch-app dance.
+
+**Goal.**
+
+A "Contact" row in `PersonProfile.svelte` showing one icon button per
+applicable channel for the person:
+
+- **Email** — `mailto:<primary_email>?subject=<context-aware default>`.
+  The subject can default to the person's most-recent open followup
+  body if any, else blank. Body left empty.
+- **Signal** — Signal supports `https://signal.me/#p/<E.164 phone>`
+  links. Requires a phone number, which the schema doesn't currently
+  store. Add `phone TEXT` to people (migration), and let the user
+  enter / dictate it. Strip non-digits + ensure leading "+".
+- **iMessage** — `sms:<E.164 phone>` opens the Messages app on iOS
+  and Mac. Same phone source as Signal. (`imessage:` URI scheme
+  is undocumented; `sms:` is the standard and routes to iMessage on
+  Apple devices.)
+
+**Implementation.**
+
+- Migration: `ALTER TABLE people ADD COLUMN phone TEXT;`
+- `PersonView` and `update_person` tool both gain a `phone` field.
+- New `<ContactRow person={...} />` component in PersonProfile,
+  rendering only the channels the person has data for. Each link
+  uses `Icon.svelte` (mail, signal, message-square; add the icons to
+  the set).
+- Phone normalization helper: `toE164(raw)` — strip everything except
+  digits and leading "+"; if no leading "+" and the number looks
+  US/Canada (10 or 11 digits starting with 1), prepend "+1".
+
+**Gotchas.**
+
+- iOS only routes `sms:` to iMessage when the recipient is also on
+  iMessage; otherwise it sends as SMS (which costs the user). Don't
+  pretend it's iMessage-specific in the UI — label it "Message".
+- Signal links with a phone number will silently fail in some
+  browsers; that's fine, it's a fallback. The browser will offer to
+  open Signal Desktop or the user will copy-paste.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
