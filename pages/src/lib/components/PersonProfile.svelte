@@ -254,5 +254,11 @@
     background: white;
     overflow: hidden;
   }
-  .btn.small { padding: 1px 6px; font-size: 12px; }
+
+  @media (max-width: 720px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .chatbox { height: 320px; }
+    h3 { flex-wrap: wrap; }
+    .rolerow, .tagrow { gap: 6px; }
+  }
 </style>

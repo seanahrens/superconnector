@@ -9,16 +9,21 @@
   --danger: #b91c1c;
   --warn: #b45309;
   --pane-w: 320px;
+  --bp-mobile: 720px;
 
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--fg);
   background: var(--bg);
+
+  /* Avoid layout creep behind iOS notches and home indicator. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * { box-sizing: border-box; }
-body, html { margin: 0; padding: 0; height: 100%; }
+body, html { margin: 0; padding: 0; height: 100%; -webkit-text-size-adjust: 100%; }
 button { font: inherit; cursor: pointer; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-hover); text-decoration: underline; }
@@ -28,19 +33,24 @@ input, textarea, select {
   background: white;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
+  /* iOS Safari zooms inputs with font-size < 16px on focus; we override
+     with !important here so component-local rules don't undo it. */
+  font-size: 16px;
 }
 input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px 14px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: white;
   color: var(--fg);
+  min-height: 36px;
 }
 .btn:hover { background: var(--hover); }
 .btn-primary {
@@ -50,6 +60,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-danger { color: var(--danger); }
+.btn.small { padding: 2px 8px; min-height: 0; font-size: 12px; }
 
 .chip {
   display: inline-flex;

@@ -76,5 +76,11 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
+  }
+  @media (max-width: 720px) {
+    .content { padding: 16px; width: 100%; }
+    .list li { gap: 8px; }
+    .list li > .col { flex: 1 1 100%; }
   }
 </style>

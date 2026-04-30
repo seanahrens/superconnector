@@ -111,6 +111,10 @@
   </section>
 </div>
 
+<svelte:head>
+  <title>People · superconnector</title>
+</svelte:head>
+
 <style>
   .layout {
     display: grid;
@@ -152,5 +156,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { border-right: 0; padding: 12px; }
+    /* On mobile, the people list IS the page — hide the empty
+       "pick a person" panel; tapping a row navigates to /people/[id]. */
+    .content { display: none; }
   }
 </style>

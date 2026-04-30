@@ -126,6 +126,15 @@
     display: grid;
     grid-template-rows: auto 1fr;
     box-shadow: -8px 0 32px rgba(0,0,0,0.08);
+    /* Respect iOS safe areas when drawer goes edge-to-edge on mobile. */
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+  }
+  @media (max-width: 720px) {
+    .drawer {
+      width: 100vw;
+      border-left: 0;
+    }
   }
   .hd {
     display: flex;

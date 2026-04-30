@@ -105,5 +105,21 @@
     gap: 16px;
   }
   .proposals li { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: white; }
-  .actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    /* Existing tags become a collapsible-feeling header strip on top with
+       horizontal scroll, so the proposals (the actionable content) get the
+       focus. */
+    .sidebar {
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+      max-height: 38vh;
+      padding: 12px;
+    }
+    .sidebar .list { flex-direction: row; flex-wrap: wrap; }
+    .content { padding: 16px; }
+    .actions input { flex: 1 1 100%; }
+  }
 </style>

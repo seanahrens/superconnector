@@ -66,6 +66,7 @@
     />
   </aside>
   <section class="content">
+    <a href="/people" class="mobile-back btn small">← all people</a>
     {#if loadError}
       <div class="error">
         <strong>Failed to load.</strong>
@@ -112,5 +113,13 @@
     background: rgba(0,0,0,0.04);
     padding: 0 4px;
     border-radius: 3px;
+  }
+  .mobile-back { display: none; align-self: flex-start; margin-bottom: 12px; }
+
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .content { padding: 16px; }
+    .mobile-back { display: inline-flex; }
   }
 </style>

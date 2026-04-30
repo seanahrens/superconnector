@@ -148,7 +148,7 @@
   }
 </script>
 
-<div class="layout">
+<div class="layout" data-pane={selected ? 'detail' : 'list'}>
   <aside class="sidebar">
     <div class="tabs">
       <button class="tab" class:active={tab === 'pending'} onclick={() => (tab = 'pending')}>
@@ -234,10 +234,13 @@
   </aside>
 
   <section class="content">
+    {#if selected}
+      <button class="mobile-back btn small" onclick={() => (selected = null)}>← back</button>
+    {/if}
     {#if tab === 'processed'}
-      <div class="muted">Processed notes have been turned into people + meetings. Click a row to open the person.</div>
+      <div class="muted">Processed notes have been turned into people + meetings. Tap a row to open the person.</div>
     {:else if !selected}
-      <div class="muted">Pick an item.</div>
+      <div class="muted desktop-only">Pick an item.</div>
     {:else if selected.kind === 'meeting_classification'}
       {@const p = payload<MeetingClassificationPayload>(selected)}
       <header class="head">
@@ -425,6 +428,7 @@
     min-height: 0;
   }
   .sidebar { border-right: 1px solid var(--border); background: white; overflow-y: auto; padding: 0; display: flex; flex-direction: column; }
+  .mobile-back { display: none; margin-bottom: 12px; }
   .tabs {
     display: flex;
     border-bottom: 1px solid var(--border);
@@ -505,5 +509,24 @@
     padding: 8px;
     margin-top: 8px;
     font-size: 13px;
+  }
+
+  @media (max-width: 720px) {
+    .layout { grid-template-columns: 1fr; }
+    /* Show one pane at a time, driven by data-pane on the layout root. */
+    .layout[data-pane='list'] .content { display: none; }
+    .layout[data-pane='detail'] .sidebar { display: none; }
+    .sidebar { border-right: 0; }
+    .content { padding: 16px; }
+    .mobile-back { display: inline-flex; }
+    .desktop-only { display: none; }
+    .grid { grid-template-columns: 1fr; gap: 8px; }
+    /* Tabs stay visible with their counts; just give them more vertical
+       breathing room and let the count chip stay on the same line. */
+    .tab { padding: 12px 4px; font-size: 13px; }
+    .count { font-size: 10px; padding: 1px 5px; }
+    /* Touch-friendly list rows. */
+    .list button, .processed-row { padding: 12px; }
+    .list { padding: 0 8px 8px; }
   }
 </style>
