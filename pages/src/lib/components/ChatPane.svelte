@@ -21,8 +21,15 @@
     loadHistory();
   });
 
+  // Apply initialInput ONCE per distinct seed value. Without this guard the
+  // effect re-fires every time the user clears the textarea (or send empties
+  // it), re-populating the field and fighting the user.
+  let lastSeed = $state<string | undefined>(undefined);
   $effect(() => {
-    if (initialInput && !input) input = initialInput;
+    if (initialInput && initialInput !== lastSeed) {
+      input = initialInput;
+      lastSeed = initialInput;
+    }
   });
 
   async function loadHistory() {
