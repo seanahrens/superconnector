@@ -67,14 +67,20 @@
 
 <div class="layout">
   <aside class="sidebar">
-    <div class="search-wrap">
-      <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
-      <input
-        class="search-input"
-        type="search"
-        placeholder="Search name, email, context…"
-        bind:value={q}
-      />
+    <div class="search-row">
+      <div class="search-wrap">
+        <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
+        <input
+          class="search-input"
+          type="search"
+          placeholder="Search name, email, context…"
+          bind:value={q}
+        />
+      </div>
+      <a href="/people/new" class="btn add-person" aria-label="Add a new person" title="Add a new person">
+        <Icon name="plus" size={16} />
+        <span class="add-label">add</span>
+      </a>
     </div>
 
     <!-- Sort: a small button that opens a popup of options with icons. The
@@ -221,7 +227,12 @@
     border-style: dashed;
   }
 
-  .search-wrap { position: relative; display: flex; }
+  .search-row { display: flex; gap: 6px; align-items: stretch; }
+  .search-wrap { position: relative; display: flex; flex: 1; }
+  .add-person { flex-shrink: 0; }
+  @media (max-width: 720px) {
+    .add-label { display: none; }
+  }
   .search-icon {
     position: absolute;
     left: 10px;

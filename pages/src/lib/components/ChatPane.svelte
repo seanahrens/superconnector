@@ -3,7 +3,7 @@
   import type { ChatMessage } from '$lib/types';
 
   interface Props {
-    scope: 'global' | 'person';
+    scope: 'global' | 'person' | 'new-person';
     threadId: string;
     personId?: string;
     initialInput?: string;
@@ -11,8 +11,10 @@
         "prefill the field and wait for the user to press send". */
     autoSend?: boolean;
     onWrite?: (toolName: string) => void | Promise<void>;
+    /** Fired when scope='new-person' and add_person resolves a new id. */
+    onPersonCreated?: (id: string) => void;
   }
-  let { scope, threadId, personId, initialInput, autoSend, onWrite }: Props = $props();
+  let { scope, threadId, personId, initialInput, autoSend, onWrite, onPersonCreated }: Props = $props();
 
   let messages = $state<Array<{ role: 'user' | 'assistant'; text: string; toolCalls?: string[] }>>([]);
   let input = $state('');
@@ -82,6 +84,10 @@
         } else if (ev.type === 'tool_error') {
           last.toolCalls = [...(last.toolCalls ?? []), `✗ ${ev.name}: ${ev.error}`];
           messages = [...messages];
+        } else if (ev.type === 'person_created') {
+          if (onPersonCreated) {
+            try { onPersonCreated(ev.id); } catch { /* ignore */ }
+          }
         }
         scrollDown();
       }

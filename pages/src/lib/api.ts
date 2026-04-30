@@ -57,7 +57,7 @@ export const api = {
   },
 
   // Streaming chat — returns a parsed event stream.
-  async *chatStream(threadId: string, content: string, scope: 'global' | 'person', personId?: string) {
+  async *chatStream(threadId: string, content: string, scope: 'global' | 'person' | 'new-person', personId?: string) {
     const resp = await fetch(`${BASE}/api/chat/threads/${threadId}/messages`, {
       method: 'POST',
       headers: headers(),
@@ -93,5 +93,6 @@ export type ChatEvent =
   | { type: 'tool_use'; name: string; id: string; write?: boolean }
   | { type: 'tool_result'; name: string; id: string; write?: boolean }
   | { type: 'tool_error'; name: string; id: string; error: string }
+  | { type: 'person_created'; id: string }
   | { type: 'done' }
   | { type: 'error'; message: string };

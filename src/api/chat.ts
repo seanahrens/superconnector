@@ -52,7 +52,11 @@ app.delete('/threads/:id', async (c) => {
 // Send a message; stream the assistant response as SSE.
 app.post('/threads/:id/messages', async (c) => {
   const threadId = c.req.param('id');
-  const body = await c.req.json<{ content: string; scope?: 'global' | 'person'; person_id?: string }>();
+  const body = await c.req.json<{
+    content: string;
+    scope?: 'global' | 'person' | 'new-person';
+    person_id?: string;
+  }>();
 
   // Load or create thread.
   let thread = await c.env.DB.prepare('SELECT * FROM chat_threads WHERE id = ?1').bind(threadId).first<ChatThreadRow>();
@@ -92,6 +96,16 @@ app.post('/threads/:id/messages', async (c) => {
         text: `You are operating in the context of ONE person:\n\n${summarizePersonForPrompt(view)}\n\nWhen the user asks something about "they/them/her/him" without naming, default to this person. When using tools that take person_id, use ${view.person.id} unless told otherwise.`,
       });
     }
+  } else if (thread.scope === 'new-person') {
+    systemBlocks.push({
+      type: 'text',
+      text:
+        'The user is creating a NEW person. The first message describes who this person is.\n' +
+        'Plan: (1) Call add_person with whatever name/email you can confidently extract.\n' +
+        '(2) Capture the returned person_id from add_person.\n' +
+        '(3) Call dictate with that person_id and the original user message verbatim — dictate will pull out signals, needs, offers, tags, followups.\n' +
+        'Keep the final reply short (1–2 sentences confirming who was added). The UI will redirect to /people/<id> as soon as add_person returns.',
+    });
   }
 
   // Build prior messages for Anthropic (skip tool/system).
@@ -102,7 +116,7 @@ app.post('/threads/:id/messages', async (c) => {
 
   const anthropicMessages: Anthropic.MessageParam[] = priorMessages.map(toAnthropic);
 
-  const stream = streamAssistantTurn(c.env, thread.id, systemBlocks, anthropicMessages);
+  const stream = streamAssistantTurn(c.env, thread.id, systemBlocks, anthropicMessages, thread.scope as 'global' | 'person' | 'new-person');
   return new Response(stream, {
     headers: {
       'content-type': 'text/event-stream',
@@ -141,6 +155,7 @@ function streamAssistantTurn(
   threadId: string,
   systemBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }>,
   messages: Anthropic.MessageParam[],
+  scope: 'global' | 'person' | 'new-person',
 ): ReadableStream<Uint8Array> {
   const enc = new TextEncoder();
   return new ReadableStream({
@@ -197,6 +212,20 @@ function streamAssistantTurn(
                 content: JSON.stringify(out),
               });
               send({ type: 'tool_result', name: tu.name, id: tu.id, write });
+
+              // In new-person scope, the first add_person call gives us the
+              // person_id we need to (a) re-scope the thread row, and
+              // (b) tell the client to redirect to /people/<id>.
+              if (scope === 'new-person' && tu.name === 'add_person') {
+                const personId = (out as { person_id?: string } | null)?.person_id;
+                if (personId) {
+                  await env.DB.prepare(
+                    `UPDATE chat_threads SET scope = 'person', person_id = ?1 WHERE id = ?2`,
+                  ).bind(personId, threadId).run();
+                  send({ type: 'person_created', id: personId });
+                  scope = 'person';
+                }
+              }
             } catch (err) {
               toolResults.push({
                 type: 'tool_result',
