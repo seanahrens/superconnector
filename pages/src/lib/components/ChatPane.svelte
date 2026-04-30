@@ -7,9 +7,12 @@
     threadId: string;
     personId?: string;
     initialInput?: string;
+    /** When true, treat initialInput as "submit on arrival" rather than
+        "prefill the field and wait for the user to press send". */
+    autoSend?: boolean;
     onWrite?: (toolName: string) => void | Promise<void>;
   }
-  let { scope, threadId, personId, initialInput, onWrite }: Props = $props();
+  let { scope, threadId, personId, initialInput, autoSend, onWrite }: Props = $props();
 
   let messages = $state<Array<{ role: 'user' | 'assistant'; text: string; toolCalls?: string[] }>>([]);
   let input = $state('');
@@ -23,12 +26,17 @@
 
   // Apply initialInput ONCE per distinct seed value. Without this guard the
   // effect re-fires every time the user clears the textarea (or send empties
-  // it), re-populating the field and fighting the user.
+  // it), re-populating the field and fighting the user. When autoSend is on,
+  // submit immediately instead of leaving the field for the user to send.
   let lastSeed = $state<string | undefined>(undefined);
   $effect(() => {
     if (initialInput && initialInput !== lastSeed) {
       input = initialInput;
       lastSeed = initialInput;
+      if (autoSend) {
+        // Run on the next tick so any pending state mutations settle first.
+        queueMicrotask(() => { void send(); });
+      }
     }
   });
 

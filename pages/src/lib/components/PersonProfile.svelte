@@ -1,8 +1,11 @@
 <script lang="ts">
   import { api } from '$lib/api';
+  import { goto } from '$app/navigation';
   import type { PersonView, TagRow, ChatThread } from '$lib/types';
   import { ulid } from '$lib/ulid';
   import ChatPane from './ChatPane.svelte';
+  import Icon from './Icon.svelte';
+  import MergeModal from './MergeModal.svelte';
 
   interface Props {
     view: PersonView;
@@ -14,6 +17,13 @@
   let editing = $state<'context' | 'needs' | 'offers' | null>(null);
   let editValue = $state('');
   let newTagName = $state('');
+  let mergeOpen = $state(false);
+
+  async function onMerged() {
+    mergeOpen = false;
+    // Re-fetch the kept person view so the merged context/aliases show up.
+    await onChanged();
+  }
 
   let chatThreadId = $state<string | null>(null);
   let lastLoadedPersonId = $state<string | null>(null);
@@ -79,7 +89,13 @@
 
 <div class="profile">
   <header class="hd">
-    <h1>{view.person.display_name ?? '(unnamed)'}</h1>
+    <div class="title-row">
+      <h1>{view.person.display_name ?? '(unnamed)'}</h1>
+      <span class="spacer"></span>
+      <button class="btn small" onclick={() => (mergeOpen = true)} title="Merge a duplicate into this person">
+        <Icon name="merge" size={14} /> Merge with…
+      </button>
+    </div>
     <div class="muted small">
       {#if view.person.primary_email}{view.person.primary_email}{/if}
       {#if view.person.geo} · {view.person.geo}{/if}
@@ -224,6 +240,21 @@
   </section>
 </div>
 
+{#if mergeOpen}
+  <MergeModal
+    keepPerson={{
+      person_id: view.person.id,
+      display_name: view.person.display_name,
+      primary_email: view.person.primary_email,
+      last_met_date: view.person.last_met_date,
+      meeting_count: view.person.meeting_count,
+      aliases: view.aliases,
+    }}
+    onClose={() => (mergeOpen = false)}
+    onMerged={() => onMerged()}
+  />
+{/if}
+
 <style>
   .profile {
     display: flex;
@@ -232,6 +263,7 @@
     max-width: 920px;
   }
   .hd h1 { margin: 0; }
+  .title-row { display: flex; align-items: center; gap: 8px; }
   .rolerow { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
   .tagrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

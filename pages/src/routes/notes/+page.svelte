@@ -2,6 +2,7 @@
   import { api } from '$lib/api';
   import type { ConfirmationItem } from '$lib/types';
   import Icon from '$components/Icon.svelte';
+  import NoteContent from '$components/NoteContent.svelte';
 
   // Payload shapes the backend writes for each queue kind.
   interface NoteForQueue {
@@ -47,7 +48,13 @@
   let pending = $state<ConfirmationItem[]>([]);
   let dismissed = $state<ConfirmationItem[]>([]);
   let processed = $state<ProcessedItem[]>([]);
-  let counts = $state({ pending: 0, processed: 0, dismissed: 0 });
+  // Initialize counts as '—' so the tab buttons render at their final width
+  // on first paint instead of going `0` → `16` and shifting layout.
+  let counts = $state<{ pending: number | string; processed: number | string; dismissed: number | string }>({
+    pending: '—',
+    processed: '—',
+    dismissed: '—',
+  });
   let loading = $state(true);
   let selected = $state<ConfirmationItem | null>(null);
   let counterpartName = $state('');
@@ -61,8 +68,11 @@
       api.get<{ items: ConfirmationItem[] }>('/api/queue?status=dismissed'),
       api.get<{ items: ProcessedItem[] }>('/api/queue/processed?limit=200'),
     ]);
-    pending = p.items;
-    dismissed = d.items;
+    // Sort queue lists by meeting (note creation) date, newest first.
+    const byMeetingDateDesc = (a: ConfirmationItem, b: ConfirmationItem) =>
+      meetingDateOf(b).localeCompare(meetingDateOf(a));
+    pending = [...p.items].sort(byMeetingDateDesc);
+    dismissed = [...d.items].sort(byMeetingDateDesc);
     processed = pr.items;
     counts = { pending: p.items.length, processed: pr.items.length, dismissed: d.items.length };
     if (selected) {
@@ -139,6 +149,13 @@
     return item.kind.replace(/_/g, ' ');
   }
 
+  // Date of the actual meeting, not when ingest classified it. Falls back
+  // to the queue row's created_at if the note timestamp is missing.
+  function meetingDateOf(item: ConfirmationItem): string {
+    const p = item.payload as { note?: { created_at?: string } } | undefined;
+    return p?.note?.created_at ?? item.created_at;
+  }
+
   function fmtDate(iso: string): string {
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
@@ -185,7 +202,7 @@
                 <div class="title">{listLabel(item)}</div>
                 <div class="muted small">
                   <span class="kind">{item.kind.replace(/_/g, ' ')}</span>
-                  <span> · {fmtDate(item.created_at)}</span>
+                  <span> · {fmtDate(meetingDateOf(item))}</span>
                 </div>
               </button>
             </li>
@@ -224,7 +241,7 @@
                 <div class="title">{listLabel(item)}</div>
                 <div class="muted small">
                   <span class="kind">{item.kind.replace(/_/g, ' ')}</span>
-                  <span> · {fmtDate(item.created_at)}</span>
+                  <span> · {fmtDate(meetingDateOf(item))}</span>
                 </div>
               </button>
             </li>
@@ -257,45 +274,10 @@
         </div>
       </header>
 
-      <div class="grid">
-        <div class="field">
-          <div class="label">Event title</div>
-          <div>{p.event_title ?? '—'}</div>
-        </div>
-        <div class="field">
-          <div class="label">Attendees (calendar)</div>
-          {#if p.attendees.length === 0}
-            <div class="muted">none matched</div>
-          {:else}
-            <ul class="inline">
-              {#each p.attendees as a}
-                <li>{a.name ?? a.email}{a.email && a.name ? ` <${a.email}>` : ''}</li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-        <div class="field">
-          <div class="label">Why ambiguous</div>
-          <div>{p.classifier_reason}</div>
-        </div>
-      </div>
-
-      {#if p.note?.summary}
-        <div class="field">
-          <div class="label">Summary</div>
-          <div class="prose">{p.note.summary}</div>
-        </div>
-      {/if}
-
-      {#if p.note?.transcript_preview}
-        <div class="field">
-          <div class="label">Transcript (preview)</div>
-          <pre class="transcript">{p.note.transcript_preview}</pre>
-        </div>
-      {/if}
-
+      <!-- Action panel comes BEFORE content so the resolve buttons stay
+           above the fold without scrolling past a long transcript. -->
       {#if tab === 'pending'}
-        <div class="resolve-block">
+        <div class="resolve-block resolve-top">
           <div class="label">Resolve as 1:1</div>
           <p class="muted small">
             Calendar didn't surface a counterpart, so we need who this was with.
@@ -329,10 +311,39 @@
           </div>
         </div>
       {:else if p.resolved_person_id}
-        <div class="muted small">
+        <div class="muted small resolve-top">
           → resolved to person <a href={`/people/${p.resolved_person_id}`}>{p.resolved_person_id}</a>
         </div>
       {/if}
+
+      <div class="grid">
+        <div class="field">
+          <div class="label">Event title</div>
+          <div>{p.event_title ?? '—'}</div>
+        </div>
+        <div class="field">
+          <div class="label">Attendees (calendar)</div>
+          {#if p.attendees.length === 0}
+            <div class="muted">none matched</div>
+          {:else}
+            <ul class="inline">
+              {#each p.attendees as a}
+                <li>{a.name ?? a.email}{a.email && a.name ? ` <${a.email}>` : ''}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+        <div class="field">
+          <div class="label">Why ambiguous</div>
+          <div>{p.classifier_reason}</div>
+        </div>
+      </div>
+
+      <NoteContent
+        summary={p.note?.summary}
+        transcript={p.note?.transcript_preview}
+        transcriptIsPreview={true}
+      />
 
     {:else if selected.kind === 'person_resolution'}
       {@const p = payload<PersonResolutionPayload>(selected)}
@@ -346,24 +357,10 @@
         </div>
       </header>
 
-      <div class="field">
-        <div class="label">Attendee from source</div>
-        {#if p.attendee?.email || p.attendee?.name}
-          <div>{p.attendee.name ?? ''} {p.attendee.email ? `<${p.attendee.email}>` : ''}</div>
-        {:else}
-          <div class="muted">{p.reason ?? 'no attendee info'}</div>
-        {/if}
-      </div>
-
-      {#if p.note?.summary}
-        <div class="field">
-          <div class="label">Summary</div>
-          <div class="prose">{p.note.summary}</div>
-        </div>
-      {/if}
-
+      <!-- Action panel above content for the same reason as
+           meeting_classification — keep it above the fold. -->
       {#if tab === 'pending'}
-        <div class="resolve-block">
+        <div class="resolve-block resolve-top">
           {#if p.candidates?.length}
             <div class="label">Candidates</div>
             <div class="actions">
@@ -395,10 +392,25 @@
           </div>
         </div>
       {:else if p.resolved_person_id}
-        <div class="muted small">
+        <div class="muted small resolve-top">
           → resolved to person <a href={`/people/${p.resolved_person_id}`}>{p.resolved_person_id}</a>
         </div>
       {/if}
+
+      <div class="field">
+        <div class="label">Attendee from source</div>
+        {#if p.attendee?.email || p.attendee?.name}
+          <div>{p.attendee.name ?? ''} {p.attendee.email ? `<${p.attendee.email}>` : ''}</div>
+        {:else}
+          <div class="muted">{p.reason ?? 'no attendee info'}</div>
+        {/if}
+      </div>
+
+      <NoteContent
+        summary={p.note?.summary}
+        transcript={p.note?.transcript_preview}
+        transcriptIsPreview={true}
+      />
 
     {:else if selected.kind === 'extraction_review'}
       <header class="head"><h2>Extraction review</h2></header>
@@ -482,17 +494,6 @@
   .field { margin-bottom: 16px; }
   .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
   .inline { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
-  .prose { white-space: pre-wrap; line-height: 1.5; }
-  .transcript {
-    background: var(--hover);
-    padding: 12px;
-    border-radius: 6px;
-    overflow-x: auto;
-    max-height: 50vh;
-    font-size: 12px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-  }
   pre {
     background: var(--hover);
     padding: 12px;
@@ -502,6 +503,14 @@
   }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
   .resolve-block { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .resolve-top {
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-top: 0;
+    padding-bottom: 16px;
+    border-top: 0;
+    border-bottom: 1px solid var(--border);
+  }
   .row { display: flex; gap: 8px; margin-bottom: 8px; }
   .row input { flex: 1; }
   .error {

@@ -6,6 +6,7 @@
   import PeopleList from '$components/PeopleList.svelte';
   import PersonProfile from '$components/PersonProfile.svelte';
   import Icon from '$components/Icon.svelte';
+  import Skeleton from '$components/Skeleton.svelte';
 
   let view = $state<PersonView | null>(null);
   let items = $state<PersonListItem[]>([]);
@@ -79,7 +80,16 @@
     {:else if view}
       <PersonProfile {view} {allTags} onChanged={refreshAll} />
     {:else}
-      <div class="muted">Loading…</div>
+      <!-- Skeleton placeholders sized to roughly match the real profile so
+           the page doesn't jump when data arrives. -->
+      <div class="profile-skel">
+        <Skeleton h="28px" w="40%" />
+        <Skeleton h="14px" w="70%" />
+        <Skeleton h="60px" />
+        <Skeleton h="120px" />
+        <Skeleton h="80px" />
+        <Skeleton h="80px" />
+      </div>
     {/if}
   </section>
 </div>
@@ -118,6 +128,13 @@
     border-radius: 3px;
   }
   .mobile-back { display: none; align-self: flex-start; margin-bottom: 12px; }
+  .profile-skel {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 920px;
+    min-height: 520px;
+  }
 
   @media (max-width: 720px) {
     .layout { grid-template-columns: 1fr; }

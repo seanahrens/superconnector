@@ -8,6 +8,7 @@
   let { open = $bindable(false) }: { open: boolean } = $props();
   let threadId = $state<string | null>(null);
   let seed = $state<string | undefined>(undefined);
+  let seedAutoSend = $state(false);
   let recent = $state<ChatThread[]>([]);
   let loading = $state(false);
   let lastOpened = $state(false);
@@ -36,16 +37,19 @@
 
   function newThread() {
     seed = undefined;
+    seedAutoSend = false;
     threadId = ulid();
   }
 
   function resume(id: string) {
     seed = undefined;
+    seedAutoSend = false;
     threadId = id;
   }
 
   function startWith(text: string) {
     seed = text;
+    seedAutoSend = true;
     threadId = ulid();
   }
 
@@ -77,7 +81,7 @@
     </div>
     <div class="body">
       {#if threadId}
-        <ChatPane scope="global" {threadId} initialInput={seed} />
+        <ChatPane scope="global" {threadId} initialInput={seed} autoSend={seedAutoSend} />
       {:else}
         <div class="empty">
           <p>Ask anything across your data — searches, matches, drafts, dictation, SQL.</p>

@@ -11,10 +11,11 @@ import {
   noteContentHash,
 } from '../lib/granola';
 import { fetchIcs, eventsAround, type IcsEvent } from '../lib/ics';
-import { classifyMeeting, bestEventForNote } from '../lib/classify';
+import { classifyMeeting, bestEventForNote, voteClassification } from '../lib/classify';
 import { resolvePerson } from '../lib/resolve';
 import { extractFromMeeting } from '../lib/extract';
 import { applyExtractionResult } from '../lib/people_writes';
+import { materializeFromGranolaNote } from '../lib/queue_resolve';
 import { ulid, nowIso } from '../lib/ulid';
 
 const SOURCE = 'granola';
@@ -143,6 +144,48 @@ async function processNote(
       eventTitle = icsEvent.summary ?? eventTitle;
       eventStart = icsEvent.start.toISOString();
       eventEnd = icsEvent.end.toISOString();
+    }
+  }
+
+  // First try the cheap three-signal vote. With Granola Personal API
+  // returning no real attendees and Proton ICS being a rolling window,
+  // most notes used to fall through to the LLM and end up "ambiguous".
+  // The vote inspects title patterns + transcript speaker count + ICS
+  // attendees and only escalates to the LLM when none of those agree.
+  const vote = voteClassification({
+    noteTitle: note.title,
+    noteSummary: note.summary,
+    ownerName: note.owner?.name ?? null,
+    transcriptTurns: note.transcript ?? null,
+    attendees,
+  });
+
+  if (vote.classification === 'group') {
+    console.log('ingest: skip group via vote', { noteId: note.id, reason: vote.reason });
+    return 'skipped';
+  }
+
+  // Confident 1:1 with a counterpart name → materialize directly.
+  if (vote.classification === '1:1' && vote.confidence >= 0.7 && vote.counterpartName) {
+    try {
+      const result = await materializeFromGranolaNote(env, {
+        noteId: note.id,
+        classification: '1:1',
+        counterpart: { name: vote.counterpartName },
+      });
+      console.log('ingest: auto-processed 1:1 via vote', {
+        noteId: note.id,
+        personId: result.personId,
+        reason: vote.reason,
+      });
+      return 'processed';
+    } catch (err) {
+      // Fall through to the LLM path / queue if materialization fails (e.g.
+      // resolvePerson returned ambiguous candidates). Don't lose the note.
+      console.error('ingest: vote-driven materialize failed, falling back', {
+        noteId: note.id,
+        err: (err as Error).message,
+      });
     }
   }
 

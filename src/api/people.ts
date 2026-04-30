@@ -10,6 +10,7 @@ import { sortScore } from '../lib/sort_score';
 import { between } from '../lib/lexorank';
 import { nowIso } from '../lib/ulid';
 import { runTool } from '../tools';
+import { rankMergeCandidates, mergePeople } from '../lib/merge_people';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -88,6 +89,15 @@ app.get('/', async (c) => {
     if (sort === 'custom') {
       return (a.custom_sort_position ?? 'z').localeCompare(b.custom_sort_position ?? 'z');
     }
+    if (sort === 'alpha') {
+      // Lowercase compare; rows with no display_name go to the end.
+      const an = (a.display_name ?? '').toLowerCase();
+      const bn = (b.display_name ?? '').toLowerCase();
+      if (!an && !bn) return 0;
+      if (!an) return 1;
+      if (!bn) return -1;
+      return an.localeCompare(bn);
+    }
     // magical
     return (
       sortScore({
@@ -165,6 +175,38 @@ app.delete('/:id/tags/:tag_name', async (c) => {
   const tagName = decodeURIComponent(c.req.param('tag_name'));
   const out = await runTool(c.env, 'remove_tag', { person_id: id, tag_name: tagName });
   return c.json(out);
+});
+
+// Merge candidates ranked by cheap regex/string heuristics (no LLM in the
+// hot path). Returns up to 10 candidates with score + reasons.
+app.get('/:id/merge-candidates', async (c) => {
+  const id = c.req.param('id');
+  const candidates = await rankMergeCandidates(c.env, id);
+  const items = candidates.map((s) => ({
+    person_id: s.person.id,
+    display_name: s.person.display_name,
+    primary_email: s.person.primary_email,
+    last_met_date: s.person.last_met_date,
+    meeting_count: s.person.meeting_count,
+    aliases: parseJsonArray(s.person.aliases),
+    score: s.score,
+    reasons: s.reasons,
+  }));
+  return c.json({ items });
+});
+
+// Perform the merge. The :id is the kept (target) person. Donor is in body.
+app.post('/:id/merge', async (c) => {
+  const keptId = c.req.param('id');
+  const { donor_id } = await c.req.json<{ donor_id: string }>();
+  if (!donor_id) return c.json({ error: 'donor_id required' }, 400);
+  if (donor_id === keptId) return c.json({ error: 'cannot merge into self' }, 400);
+  try {
+    const result = await mergePeople(c.env, keptId, donor_id);
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
 });
 
 async function loadTagsForPeople(env: Env, ids: string[]): Promise<Map<string, string[]>> {

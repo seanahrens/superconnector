@@ -29,13 +29,14 @@
 <div class="layout">
   <aside class="sidebar">
     <h3>Existing tags ({tags.length})</h3>
+    <p class="muted small">Tap a tag to filter the People list by it.</p>
     {#if loading}
       <div class="muted small">loading…</div>
     {/if}
     <ul class="list">
       {#each tags as t}
         <li>
-          <span class="chip">{t.name}</span>
+          <a class="chip tag-link" href={`/people?tags=${encodeURIComponent(t.name)}`}>{t.name}</a>
           <span class="muted small">{t.category ?? 'free'} · used {t.use_count}×</span>
         </li>
       {/each}
@@ -44,6 +45,12 @@
 
   <section class="content">
     <h2>Proposals ({proposals.length})</h2>
+    <p class="muted small intro">
+      During ingest the extraction LLM suggests new tags it thinks should
+      exist (e.g. <em>trajectory/raising_seed</em> emerging from a meeting).
+      Until you accept one here, it doesn't enter the canonical tag set on
+      the left.
+    </p>
     {#if proposals.length === 0}
       <p class="muted">No pending proposals.</p>
     {:else}
@@ -105,6 +112,9 @@
     gap: 16px;
   }
   .proposals li { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: white; }
+  .tag-link { text-decoration: none; }
+  .tag-link:hover { background: var(--accent); color: white; border-color: var(--accent); text-decoration: none; }
+  .intro { max-width: 60ch; margin-top: 4px; }
   .actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
 
   @media (max-width: 720px) {
