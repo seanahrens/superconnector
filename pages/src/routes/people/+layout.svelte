@@ -31,11 +31,11 @@
 
   const ROLE_OPTIONS = ['founder', 'funder', 'talent', 'advisor'];
   const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
-    { key: 'magical', label: 'Magical' },
-    { key: 'recent', label: 'Most recent' },
-    { key: 'frequent', label: 'Most frequent' },
+    { key: 'magical', label: 'Default' },
+    { key: 'recent', label: 'Most Recent' },
+    { key: 'frequent', label: 'Most Frequent' },
     { key: 'alpha', label: 'Alphabetical' },
-    { key: 'custom', label: 'Custom order' },
+    { key: 'custom', label: 'Custom Order' },
   ];
 
   async function load() {
