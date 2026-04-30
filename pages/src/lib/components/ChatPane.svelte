@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import type { ChatMessage } from '$lib/types';
+  import MarkdownView from './MarkdownView.svelte';
 
   interface Props {
     scope: 'global' | 'person' | 'new-person';
@@ -126,7 +127,11 @@
             {#each m.toolCalls as t}<span class="tool">{t}</span>{/each}
           </div>
         {/if}
-        <div class="text">{m.text}</div>
+        {#if m.role === 'assistant'}
+          <div class="text"><MarkdownView text={m.text} /></div>
+        {:else}
+          <div class="text">{m.text}</div>
+        {/if}
       </div>
     {/each}
   </div>

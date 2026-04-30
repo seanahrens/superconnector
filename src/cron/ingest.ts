@@ -99,6 +99,20 @@ export async function runIngest(
 
 type ProcessOutcome = 'processed' | 'reprocessed' | 'skipped';
 
+// Returns true when a pending queue row already exists for this note +
+// kind. Lets us skip a redundant INSERT instead of relying solely on the
+// unique index (which would error and abort the whole transaction).
+async function isAlreadyQueued(env: Env, kind: string, noteId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 FROM confirmation_queue
+      WHERE kind = ?1
+        AND json_extract(payload, '$.note.id') = ?2
+        AND status = 'pending'
+      LIMIT 1`,
+  ).bind(kind, noteId).first();
+  return !!row;
+}
+
 async function logDisposition(
   env: Env,
   note: GranolaNote,
@@ -244,21 +258,23 @@ async function processNote(
   };
 
   if (cls.classification === 'ambiguous') {
-    await env.DB.prepare(
-      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-       VALUES (?1, 'meeting_classification', ?2, 'pending', ?3)`,
-    ).bind(
-      // queued via meeting_classification
-      ulid(),
-      JSON.stringify({
-        note: noteForQueue,
-        event_title: eventTitle,
-        attendees,
-        classifier_reason: cls.reason,
-      }),
-      nowIso(),
-    ).run();
-    await logDisposition(env, note, 'queued', `meeting_classification: ${cls.reason}`, null, null);
+    if (!(await isAlreadyQueued(env, 'meeting_classification', note.id))) {
+      await env.DB.prepare(
+        `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
+         VALUES (?1, 'meeting_classification', ?2, 'pending', ?3)`,
+      ).bind(
+        // queued via meeting_classification
+        ulid(),
+        JSON.stringify({
+          note: noteForQueue,
+          event_title: eventTitle,
+          attendees,
+          classifier_reason: cls.reason,
+        }),
+        nowIso(),
+      ).run();
+      await logDisposition(env, note, 'queued', `meeting_classification: ${cls.reason}`, null, null);
+    }
     return 'processed';
   }
 
@@ -266,20 +282,22 @@ async function processNote(
   // rather than silently creating a phantom (unknown) row.
   const counterpart = attendees[0] ?? null;
   if (!counterpart || (!counterpart.email && !counterpart.name)) {
-    await env.DB.prepare(
-      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-       VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
-    ).bind(
-      ulid(),
-      JSON.stringify({
-        note: noteForQueue,
-        attendee: null,
-        candidates: [],
-        reason: 'no usable attendee info from Granola or ICS',
-      }),
-      nowIso(),
-    ).run();
-    await logDisposition(env, note, 'queued', 'person_resolution: no attendee info', null, null);
+    if (!(await isAlreadyQueued(env, 'person_resolution', note.id))) {
+      await env.DB.prepare(
+        `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
+         VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
+      ).bind(
+        ulid(),
+        JSON.stringify({
+          note: noteForQueue,
+          attendee: null,
+          candidates: [],
+          reason: 'no usable attendee info from Granola or ICS',
+        }),
+        nowIso(),
+      ).run();
+      await logDisposition(env, note, 'queued', 'person_resolution: no attendee info', null, null);
+    }
     return 'processed';
   }
 
@@ -288,19 +306,21 @@ async function processNote(
     name: counterpart.name,
   });
   if (resolved.ambiguous) {
-    await env.DB.prepare(
-      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-       VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
-    ).bind(
-      ulid(),
-      JSON.stringify({
-        note: noteForQueue,
-        attendee: counterpart,
-        candidates: resolved.candidatesIfAmbiguous,
-      }),
-      nowIso(),
-    ).run();
-    await logDisposition(env, note, 'queued', 'person_resolution: ambiguous candidates', null, null);
+    if (!(await isAlreadyQueued(env, 'person_resolution', note.id))) {
+      await env.DB.prepare(
+        `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
+         VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
+      ).bind(
+        ulid(),
+        JSON.stringify({
+          note: noteForQueue,
+          attendee: counterpart,
+          candidates: resolved.candidatesIfAmbiguous,
+        }),
+        nowIso(),
+      ).run();
+      await logDisposition(env, note, 'queued', 'person_resolution: ambiguous candidates', null, null);
+    }
     return 'processed';
   }
 

@@ -140,7 +140,11 @@ You have tools to search people, find matches, draft intros, manage tags and fol
 
 When the user gives you freetext info about a person ("Sarah just left OpenAI"), call the dictate tool to extract and apply structured updates. When they ask "who would be a good X for Y", call find_matches. When they want to know what they know about someone, call search_people then brief_for.
 
-Always keep your final natural-language reply tight and concrete. Quote facts, don't restate the JSON.`;
+Reply formatting:
+- The web UI renders your text as light markdown. **Bold**, *italic*, \`code\`, line breaks, and [text](/path) links all work. Use them sparingly.
+- When referencing a person, link to their profile with friendly anchor text — e.g. [Hale Guyer](/people/01KQG455PS1TB4FH2WSS6AMAWR), not the bare ULID. Use the relative path /people/<id>; the UI navigates client-side.
+- In the new-person scope (creating someone from scratch), DO NOT include a profile link in your reply. The UI auto-redirects to the new profile as soon as add_person resolves, so a link is redundant. A one-line confirmation ("Added Hale Guyer; FAR Labs context captured.") is enough.
+- Keep replies tight and concrete. Quote facts, don't restate the JSON.`;
 
 function toAnthropic(m: ChatMessageRow): Anthropic.MessageParam {
   if (m.role === 'user') {
