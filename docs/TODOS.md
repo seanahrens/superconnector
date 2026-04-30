@@ -981,6 +981,123 @@ trigger cap not exceeded; D1 free plan covers Time Travel).
 
 ---
 
+## P. Notes detail: full transcript + investigate missing summaries
+
+Two related bugs in the /notes detail pane:
+
+### P1. Transcripts capped at 1500 chars
+
+The current preview is sliced in `src/cron/ingest.ts` →
+`transcriptToString(note.transcript)?.slice(0, 1500)` and stored on the
+queue payload as `transcript_preview`. The Notes UI passes that 1500-
+char string straight to `<NoteContent>`, which is why every transcript
+seems truncated.
+
+For **processed** items the full transcript is in `meetings.transcript`
+(unsliced) — the page just isn't reading from there because the
+Processed tab currently navigates straight to `/people/<id>` instead of
+opening the same detail view.
+
+**Fix.**
+
+- For queue items (pending/dismissed): when the user opens the detail
+  pane, lazily fetch the full note from Granola via a new server
+  endpoint `GET /api/notes/granola/:noteId` that proxies to
+  `granola.getNote(id)` and returns `{ summary, transcript_str }`.
+  Replace the inline preview with the full transcript once loaded;
+  show a subtle spinner inline while fetching.
+- For processed items: same component, but read `transcript` from
+  `meetings` directly via `GET /api/notes/meeting/:meetingId`.
+- Keep `transcript_preview` on the queue payload as a snappy first
+  paint while the full body streams in.
+
+**Touch points.**
+- `src/api/notes.ts` (new) — two GET endpoints above. Auth-gated.
+- `pages/src/lib/components/NoteContent.svelte` — accept `noteId` and/or
+  `meetingId` props; on mount, if the transcript is preview-only,
+  fetch the full one and swap.
+- `pages/src/routes/notes/+page.svelte` — pass the IDs through, drop
+  the `transcriptIsPreview={true}` flag once the fetch lands.
+
+### P2. Summaries not showing
+
+User reports "no summaries showing" in the Note → Summary tab. Possible
+causes, in order of likelihood:
+
+1. **Granola Personal API doesn't include `summary` by default.** Our
+   `getNote(id)` call uses `?include=transcript`. Granola may have a
+   separate include for summary content (e.g. `?include=transcript,summary`
+   or `?include=note_body`). Need to read the API docs and probe.
+2. **Granola's "summary" field is named differently.** Some calendars
+   call it `description`, `body`, `markdown`, `meeting_summary`, or
+   `ai_summary`. Granola's app shows a markdown summary so the field
+   exists; we just may be reading the wrong key.
+3. **Summary is empty for this user's notes** because they don't run
+   the summary step in the Granola app for every meeting. Less likely
+   but possible.
+
+**Investigation step (do first).** Hit the diagnostic endpoint with a
+specific note id and dump every key on the response:
+
+```
+GET /api/run/check-granola?id=<noteId>
+```
+
+(Add an optional `id` parameter to that endpoint and return the full
+JSON body for that note.) Whatever field actually carries the summary
+becomes the new mapping in `src/lib/granola.ts`.
+
+**Likely fix.** Update `GranolaNote` type and `getNote` query string
+to pull both summary and transcript. Backfill: a one-shot admin
+endpoint `POST /api/admin/refill-summaries` that re-fetches each
+existing meeting's note and writes the now-correct summary to
+`meetings.summary`.
+
+---
+
+## Q. Add-person page polish
+
+Two layout fixes on `/people` and `/people/new`:
+
+1. **`/people/new` should keep the left people list visible** (when
+   the viewport is wide enough). Right now the page is a centered
+   single column, so the user loses context — they'd want to see who
+   already exists while they're describing a new contact, both to spot
+   duplicates and to scan their own graph.
+
+   Use the same two-pane layout as `/people/[id]`: the People list on
+   the left (re-usable `<PeopleListSidebar>` extracted from
+   `+layout`), and the chat-style add form on the right.
+
+   On mobile (< 720px), keep the current single-column behavior
+   so the chat takes the whole screen.
+
+2. **`/people` add button → floating action button.** Move the
+   "+ add" affordance out of the search row and make it a circular
+   FAB pinned to the bottom of the people-list pane (or the viewport
+   on mobile), centered horizontally.
+
+   - Desktop: `position: absolute; bottom: 24px; left: 50%;
+     transform: translateX(-50%);` inside the `.sidebar` (which
+     becomes `position: relative`). Stays visible while the list
+     scrolls.
+   - Mobile: same pattern but anchored to the viewport
+     (`position: fixed; bottom: 16px + safe-area-inset-bottom`).
+   - Looks like a 48px circle with the `plus` icon centered.
+     Accent color background, white icon. Light shadow.
+
+   Remove the inline "+ add" button from the search row to avoid two
+   affordances for the same action.
+
+**Touch points.**
+- `pages/src/routes/people/+page.svelte` — drop the inline button,
+  add the FAB at the end of the sidebar (or as a sibling of the
+  layout). Adjust .sidebar to `position: relative` on desktop.
+- `pages/src/routes/people/new/+page.svelte` — switch to a two-column
+  layout that mirrors `/people/[id]` on wide viewports.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
