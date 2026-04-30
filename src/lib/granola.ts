@@ -4,20 +4,47 @@
 // Auth: Authorization: Bearer grn_...
 //
 // List endpoint returns notes without transcripts; fetch each note individually
-// with ?include=transcript to get the full transcript.
+// with ?include=transcript to get the full transcript array.
 
 export interface GranolaOwner {
   name: string | null;
   email: string | null;
 }
 
+export interface GranolaAttendee {
+  name: string | null;
+  email: string | null;
+  response_status?: string | null;
+}
+
+export interface GranolaCalendarEvent {
+  id?: string;
+  summary?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  attendees?: GranolaAttendee[];
+  [key: string]: unknown;
+}
+
+export interface GranolaTranscriptTurn {
+  text: string;
+  start_time?: string;
+  end_time?: string;
+  speaker?: { source?: string; diarization_label?: string };
+}
+
 export interface GranolaNote {
   id: string;
   title: string | null;
-  created_at: string;           // ISO 8601 — used as our high-water mark
+  web_url?: string | null;
+  owner: GranolaOwner;
+  created_at: string;
+  updated_at?: string;
+  calendar_event: GranolaCalendarEvent | null;
+  attendees: GranolaAttendee[];
   summary: string | null;
-  transcript: string | null;    // null when fetched from list; populated by getNote()
-  owner: GranolaOwner;          // the note creator (the user themselves)
+  // Array of turns when fetched with ?include=transcript; null otherwise.
+  transcript: GranolaTranscriptTurn[] | null;
 }
 
 interface ListResponse {
@@ -27,8 +54,8 @@ interface ListResponse {
 }
 
 export interface GranolaListOptions {
-  created_after?: string;  // ISO 8601 — only return notes created after this time
-  limit?: number;          // max total notes to return (across pages); default 50
+  created_after?: string;
+  limit?: number;
 }
 
 export class GranolaClient {
@@ -71,4 +98,30 @@ export class GranolaClient {
     }
     return (await resp.json()) as GranolaNote;
   }
+}
+
+// Fold a transcript array (one entry per spoken turn) into a single string we
+// can store in D1 and pass to the extraction LLM. Speaker labels prepended when
+// available so the model can see who said what.
+export function transcriptToString(
+  turns: GranolaTranscriptTurn[] | null | undefined,
+): string | null {
+  if (!turns || turns.length === 0) return null;
+  return turns
+    .map((t) => {
+      const label = t.speaker?.diarization_label ?? t.speaker?.source ?? '';
+      return label ? `[${label}] ${t.text}` : t.text;
+    })
+    .join('\n');
+}
+
+// Returns true when the only attendee is the note owner (i.e. a solo note).
+export function isSoloNote(note: GranolaNote, userEmail: string | null): boolean {
+  const ownerEmail = (note.owner?.email ?? '').toLowerCase();
+  const me = (userEmail ?? '').toLowerCase();
+  const others = (note.calendar_event?.attendees ?? note.attendees ?? []).filter((a) => {
+    const e = (a.email ?? '').toLowerCase();
+    return e && e !== ownerEmail && e !== me;
+  });
+  return others.length === 0 && !note.calendar_event;
 }

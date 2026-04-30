@@ -2,7 +2,13 @@
 // extract → commit. ICS data lives only in RAM during the run.
 
 import type { Env } from '../../worker-configuration';
-import { GranolaClient, type GranolaNote } from '../lib/granola';
+import {
+  GranolaClient,
+  type GranolaNote,
+  type GranolaAttendee,
+  transcriptToString,
+  isSoloNote,
+} from '../lib/granola';
 import { fetchIcs, eventsAround, type IcsEvent } from '../lib/ics';
 import { classifyMeeting, bestEventForNote } from '../lib/classify';
 import { resolvePerson } from '../lib/resolve';
@@ -15,7 +21,6 @@ const SOURCE = 'granola';
 export async function runIngest(env: Env): Promise<{ processed: number; skipped: number }> {
   const since = await getHighWaterMark(env);
   const granola = new GranolaClient(env.GRANOLA_API_KEY);
-  // List returns lightweight note objects without transcripts.
   const notes = await granola.listNotes({ created_after: since ?? undefined, limit: 50 });
 
   let icsEvents: IcsEvent[] | null = null;
@@ -33,10 +38,10 @@ export async function runIngest(env: Env): Promise<{ processed: number; skipped:
       icsEvents = env.PROTON_ICS_URL ? await fetchIcs(env.PROTON_ICS_URL).catch(() => []) : [];
     }
     try {
-      // Fetch the full note (with transcript) only for notes we'll actually process.
       const fullNote = await granola.getNote(note.id);
-      await processNote(env, fullNote, icsEvents);
-      processed++;
+      const result = await processNote(env, fullNote, icsEvents);
+      if (result === 'processed') processed++;
+      else skipped++;
     } catch (err) {
       console.error('ingest error', { noteId: note.id, err: (err as Error).message });
     }
@@ -44,30 +49,78 @@ export async function runIngest(env: Env): Promise<{ processed: number; skipped:
   }
 
   if (lastRef && lastRef !== since) await setHighWaterMark(env, lastRef);
-  // ICS data falls out of scope here.
   return { processed, skipped };
 }
 
-async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Promise<void> {
-  const recordedAt = new Date(note.created_at);
-  const candidates = eventsAround(events, recordedAt, 15);
-  const { event, confidence } = bestEventForNote(candidates, note.title);
+type ProcessOutcome = 'processed' | 'skipped';
 
-  // Attendees come from the calendar event only (Granola API has no attendee field).
-  const attendees = (event?.attendees ?? []).map((a) => ({
-    email: a.email ?? null,
-    name: a.name ?? null,
-  }));
+async function processNote(
+  env: Env,
+  note: GranolaNote,
+  icsEventsAll: IcsEvent[],
+): Promise<ProcessOutcome> {
+  // Solo notes (personal brainstorming, no other attendees, no calendar event)
+  // shouldn't enter the people graph at all — skip silently.
+  if (isSoloNote(note, env.EMAIL_TO ?? null)) return 'skipped';
+
+  // Prefer Granola's own calendar_event.attendees when present (high confidence,
+  // attribution from the meeting source). Fall back to ICS time-window match.
+  const userEmail = (env.EMAIL_TO ?? '').toLowerCase();
+  const ownerEmail = (note.owner?.email ?? '').toLowerCase();
+
+  const granolaPeople: GranolaAttendee[] =
+    note.calendar_event?.attendees ?? note.attendees ?? [];
+
+  let icsEvent: IcsEvent | null = null;
+  let calendarConfidence = 0;
+  let attendees: Array<{ email: string | null; name: string | null }> = [];
+  let eventTitle: string | null = note.calendar_event?.summary ?? null;
+  let eventStart: string | null = note.calendar_event?.start_time ?? null;
+  let eventEnd: string | null = note.calendar_event?.end_time ?? null;
+
+  const granolaOthers = granolaPeople.filter(
+    (a) => a.email && a.email.toLowerCase() !== userEmail && a.email.toLowerCase() !== ownerEmail,
+  );
+
+  if (granolaOthers.length > 0) {
+    attendees = granolaOthers.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
+    calendarConfidence = 0.95;
+  } else {
+    const recordedAt = new Date(note.created_at);
+    const candidates = eventsAround(icsEventsAll, recordedAt, 15);
+    const match = bestEventForNote(candidates, note.title);
+    icsEvent = match.event;
+    calendarConfidence = match.confidence;
+    if (icsEvent) {
+      const others = (icsEvent.attendees ?? []).filter(
+        (a) => (a.email ?? '').toLowerCase() !== userEmail,
+      );
+      attendees = others.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
+      eventTitle = icsEvent.summary ?? eventTitle;
+      eventStart = icsEvent.start.toISOString();
+      eventEnd = icsEvent.end.toISOString();
+    }
+  }
 
   const cls = await classifyMeeting(env, {
     noteTitle: note.title,
     noteSummary: note.summary,
-    eventTitle: event?.summary ?? null,
+    eventTitle,
     attendees,
   });
 
-  // Group meetings: skip entirely in v1.
-  if (cls.classification === 'group') return;
+  if (cls.classification === 'group') return 'skipped';
+
+  // Stash a compact view of the note for the queue UI (no embedded transcript array).
+  const noteForQueue = {
+    id: note.id,
+    title: note.title,
+    web_url: note.web_url,
+    owner: note.owner,
+    created_at: note.created_at,
+    summary: note.summary,
+    transcript_preview: transcriptToString(note.transcript)?.slice(0, 1500) ?? null,
+  };
 
   if (cls.classification === 'ambiguous') {
     await env.DB.prepare(
@@ -76,21 +129,39 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
     ).bind(
       ulid(),
       JSON.stringify({
-        note,
-        event_title: event?.summary ?? null,
+        note: noteForQueue,
+        event_title: eventTitle,
         attendees,
         classifier_reason: cls.reason,
       }),
       nowIso(),
     ).run();
-    return;
+    return 'processed';
   }
 
-  // 1:1: resolve the counterpart. Prefer the calendar attendee that isn't the user.
-  const counterpart = pickCounterpart(attendees, env.EMAIL_TO);
+  // 1:1 path. If we have no usable counterpart info, queue for person_resolution
+  // rather than silently creating a phantom (unknown) row.
+  const counterpart = attendees[0] ?? null;
+  if (!counterpart || (!counterpart.email && !counterpart.name)) {
+    await env.DB.prepare(
+      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
+       VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
+    ).bind(
+      ulid(),
+      JSON.stringify({
+        note: noteForQueue,
+        attendee: null,
+        candidates: [],
+        reason: 'no usable attendee info from Granola or ICS',
+      }),
+      nowIso(),
+    ).run();
+    return 'processed';
+  }
+
   const resolved = await resolvePerson(env, {
-    email: counterpart?.email ?? null,
-    name: counterpart?.name ?? null,
+    email: counterpart.email,
+    name: counterpart.name,
   });
   if (resolved.ambiguous) {
     await env.DB.prepare(
@@ -98,13 +169,18 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
        VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
     ).bind(
       ulid(),
-      JSON.stringify({ note, attendee: counterpart, candidates: resolved.candidatesIfAmbiguous }),
+      JSON.stringify({
+        note: noteForQueue,
+        attendee: counterpart,
+        candidates: resolved.candidatesIfAmbiguous,
+      }),
       nowIso(),
     ).run();
-    return;
+    return 'processed';
   }
 
-  // Persist the meeting.
+  // Persist meeting (transcript folded to a single string).
+  const transcriptStr = transcriptToString(note.transcript);
   const meetingId = ulid();
   const now = nowIso();
   await env.DB.prepare(
@@ -120,13 +196,13 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
     note.id,
     note.created_at,
     null,
-    event ? confidence : null,
-    event?.summary ?? null,
-    event?.start.toISOString() ?? null,
-    event?.end.toISOString() ?? null,
+    calendarConfidence || null,
+    eventTitle,
+    eventStart,
+    eventEnd,
     JSON.stringify(attendees),
-    note.transcript ?? null,
-    note.summary ?? null,
+    transcriptStr,
+    note.summary,
     cls.classification,
     now,
   ).run();
@@ -147,7 +223,7 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
     source: SOURCE,
     noteTitle: note.title,
     noteSummary: note.summary,
-    transcript: note.transcript,
+    transcript: transcriptStr,
     existingPerson: existing
       ? {
           displayName: existing.display_name,
@@ -161,16 +237,7 @@ async function processNote(env: Env, note: GranolaNote, events: IcsEvent[]): Pro
   });
 
   await applyExtractionResult(env, { personId: resolved.personId, meetingId, result });
-}
-
-function pickCounterpart(
-  attendees: Array<{ email: string | null; name: string | null }>,
-  userEmail: string | undefined,
-): { email: string | null; name: string | null } | null {
-  if (attendees.length === 0) return null;
-  const me = (userEmail ?? '').toLowerCase();
-  const others = attendees.filter((a) => (a.email ?? '').toLowerCase() !== me);
-  return others[0] ?? attendees[0] ?? null;
+  return 'processed';
 }
 
 async function isAlreadyIngested(env: Env, sourceRef: string): Promise<boolean> {

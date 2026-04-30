@@ -70,6 +70,44 @@ app.post('/api/run/daily-email', requireAuth, async (c) => {
   }
 });
 
+// Admin: clean up phantom (unknown) people created before ingest hardening.
+// People with no email, no name, and zero meetings are pure noise — delete them
+// and any tags/signals/followups that referenced them.
+app.post('/api/admin/cleanup-phantoms', requireAuth, async (c) => {
+  const phantoms = await c.env.DB.prepare(
+    `SELECT id FROM people
+     WHERE (display_name IS NULL OR display_name = '')
+       AND (primary_email IS NULL OR primary_email = '')
+       AND meeting_count = 0`,
+  ).all<{ id: string }>();
+  const ids = (phantoms.results ?? []).map((r) => r.id);
+  for (const id of ids) {
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM person_tags WHERE person_id = ?1').bind(id),
+      c.env.DB.prepare('DELETE FROM signals WHERE person_id = ?1').bind(id),
+      c.env.DB.prepare('DELETE FROM followups WHERE person_id = ?1').bind(id),
+      c.env.DB.prepare('DELETE FROM people WHERE id = ?1').bind(id),
+    ]);
+  }
+  return c.json({ deleted: ids.length });
+});
+
+// Admin: dismiss every pending queue item. Use after a logic change makes the
+// existing pending items stale.
+app.post('/api/admin/clear-queue', requireAuth, async (c) => {
+  const r = await c.env.DB.prepare(
+    `UPDATE confirmation_queue SET status = 'dismissed' WHERE status = 'pending'`,
+  ).run();
+  return c.json({ dismissed: r.meta.changes ?? 0 });
+});
+
+// Admin: reset the Granola high-water mark so the next ingest re-pulls notes.
+// Existing meetings are kept; isAlreadyIngested skips duplicates by source_ref.
+app.post('/api/admin/reset-ingest', requireAuth, async (c) => {
+  await c.env.DB.prepare(`DELETE FROM ingest_state WHERE source = 'granola'`).run();
+  return c.json({ ok: true });
+});
+
 // Diagnostic: test Granola API connectivity and show raw response shape.
 app.get('/api/run/check-granola', requireAuth, async (c) => {
   const key = c.env.GRANOLA_API_KEY;

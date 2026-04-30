@@ -46,7 +46,14 @@ app.get('/', async (c) => {
   // Pre-fetch tag names per person if any tag filter or we want to return tags.
   const personTagMap = await loadTagsForPeople(c.env, rows.map((r) => r.id));
 
-  let filtered: PersonRow[] = rows;
+  // Hide phantom rows (no name, no email, zero meetings) from the list view.
+  // They can still be accessed by direct id if needed.
+  let filtered: PersonRow[] = rows.filter(
+    (p) =>
+      (p.display_name && p.display_name.trim()) ||
+      (p.primary_email && p.primary_email.trim()) ||
+      p.meeting_count > 0,
+  );
 
   if (search) {
     const needle = search.toLowerCase();
