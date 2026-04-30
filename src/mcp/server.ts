@@ -6,7 +6,7 @@
 
 import type { Env } from '../../worker-configuration';
 import { ALL_TOOLS, runTool } from '../tools';
-import { toAnthropicTool } from '../tools/types';
+import { toMcpTool } from '../tools/types';
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -71,7 +71,7 @@ async function dispatch(env: Env, req: JsonRpcRequest): Promise<JsonRpcResponse>
         return {
           jsonrpc: '2.0',
           id,
-          result: { tools: ALL_TOOLS.map(toAnthropicTool) },
+          result: { tools: ALL_TOOLS.map(toMcpTool) },
         };
       case 'tools/call': {
         const params = (req.params ?? {}) as { name: string; arguments?: unknown };
@@ -87,6 +87,9 @@ async function dispatch(env: Env, req: JsonRpcRequest): Promise<JsonRpcResponse>
         };
       }
       case 'ping':
+        return { jsonrpc: '2.0', id, result: {} };
+      case 'notifications/initialized':
+        // Notification — no response body needed, but return empty success.
         return { jsonrpc: '2.0', id, result: {} };
       default:
         return {

@@ -18,7 +18,7 @@ export interface Tool<I = unknown, O = unknown> {
   handler: (env: Env, input: I) => Promise<O>;
 }
 
-// Anthropic tool_use format. Same shape MCP uses for `tools/list`.
+// Anthropic tool_use format (used when calling Claude API).
 export interface AnthropicToolDef {
   name: string;
   description: string;
@@ -30,5 +30,20 @@ export function toAnthropicTool(t: Tool): AnthropicToolDef {
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema,
+  };
+}
+
+// MCP tools/list format (camelCase inputSchema per MCP 2025-03-26 spec).
+export interface McpToolDef {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+}
+
+export function toMcpTool(t: Tool): McpToolDef {
+  return {
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
   };
 }

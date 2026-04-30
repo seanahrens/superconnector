@@ -49,13 +49,43 @@ app.route('/api/digest', digest);
 
 // Manual triggers (auth-gated) for testing the cron paths.
 app.post('/api/run/ingest', requireAuth, async (c) => {
-  const result = await runIngest(c.env);
-  return c.json(result);
+  try {
+    const result = await runIngest(c.env);
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('ingest failed', message);
+    return c.json({ error: message }, 500);
+  }
 });
 
 app.post('/api/run/daily-email', requireAuth, async (c) => {
-  await runDailyEmail(c.env);
-  return c.json({ ok: true });
+  try {
+    await runDailyEmail(c.env);
+    return c.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('daily-email failed', message);
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Diagnostic: test Granola API connectivity and show raw response shape.
+app.get('/api/run/check-granola', requireAuth, async (c) => {
+  const key = c.env.GRANOLA_API_KEY;
+  if (!key) return c.json({ error: 'GRANOLA_API_KEY not set' }, 500);
+  try {
+    const url = 'https://api.granola.so/v1/notes?limit=1';
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+    });
+    const text = await resp.text();
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+    return c.json({ status: resp.status, url, body: parsed });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
 });
 
 async function pingDb(env: Env): Promise<boolean> {
