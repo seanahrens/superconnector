@@ -29,6 +29,14 @@ app.post('/:id/complete', async (c) => {
   return c.json(out);
 });
 
+// Hard delete a followup. Different from "dropped" — this removes the row
+// entirely. Use when a followup was created in error.
+app.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  await c.env.DB.prepare('DELETE FROM followups WHERE id = ?1').bind(id).run();
+  return c.json({ ok: true });
+});
+
 // Inline edit of the followup body (or due_date) — not a status change.
 app.patch('/:id', async (c) => {
   const id = c.req.param('id');

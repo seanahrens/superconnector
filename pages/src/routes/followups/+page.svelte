@@ -2,6 +2,7 @@
   import { api } from '$lib/api';
   import type { FollowupItem } from '$lib/types';
   import EditableField from '$components/EditableField.svelte';
+  import Icon from '$components/Icon.svelte';
   import { fmtShortDate } from '$lib/dates';
 
   let items = $state<FollowupItem[]>([]);
@@ -22,6 +23,11 @@
   }
   async function saveBody(id: string, body: string) {
     await api.patch(`/api/followups/${id}`, { body });
+    await load();
+  }
+  async function deleteFollowup(id: string) {
+    if (!confirm('Delete this followup? It will be removed permanently.')) return;
+    await api.delete(`/api/followups/${id}`);
     await load();
   }
 </script>
@@ -67,6 +73,9 @@
           {:else}
             <button class="btn" onclick={() => setStatus(f.id, 'open')}>re-open</button>
           {/if}
+          <button class="btn btn-danger" onclick={() => deleteFollowup(f.id)} aria-label="Delete">
+            <Icon name="trash" size={14} />
+          </button>
         </li>
       {/each}
     </ul>

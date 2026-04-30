@@ -101,6 +101,35 @@
     await onChanged();
   }
 
+  async function deleteFollowup(id: string) {
+    if (!confirm('Delete this followup? It will be removed permanently.')) return;
+    await api.delete(`/api/followups/${id}`);
+    await onChanged();
+  }
+
+  let newFollowupBody = $state('');
+  let newFollowupDue = $state('');
+  let creatingFollowup = $state(false);
+
+  async function createFollowup() {
+    const body = newFollowupBody.trim();
+    if (!body || creatingFollowup) return;
+    creatingFollowup = true;
+    try {
+      await api.post('/api/followups', {
+        person_id: view.person.id,
+        body,
+        due_date: newFollowupDue || undefined,
+      });
+      newFollowupBody = '';
+      newFollowupDue = '';
+      followupTab = 'open';
+      await onChanged();
+    } finally {
+      creatingFollowup = false;
+    }
+  }
+
   // Group signals under the meeting they came from so the timeline reads
   // as "this happened, here's what we extracted".
   const signalsByMeeting = $derived.by(() => {
@@ -169,6 +198,7 @@
       </div>
       <div class="hero-meta muted small">
         <span class="meta-cell">
+          <Icon name="mail" size={14} />
           <EditableField
             value={view.person.primary_email}
             placeholder="add email"
@@ -181,6 +211,7 @@
           />
         </span>
         <span class="meta-cell">
+          <Icon name="phone" size={14} />
           <EditableField
             value={view.person.phone}
             placeholder="add phone"
@@ -193,7 +224,7 @@
           />
         </span>
         <span class="meta-cell">
-          🏠
+          <Icon name="home" size={14} />
           <EditableField
             value={view.person.home_location}
             placeholder="add home"
@@ -205,7 +236,7 @@
           />
         </span>
         <span class="meta-cell">
-          💼
+          <Icon name="briefcase" size={14} />
           <EditableField
             value={view.person.work_org}
             placeholder="add org"
@@ -228,8 +259,14 @@
             }}
           />
         </span>
-        <span class="meta-cell">last met {fmtShortDate(view.person.last_met_date)}</span>
-        <span class="meta-cell">{view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}</span>
+        <span class="meta-cell">
+          <Icon name="calendar" size={14} />
+          last met {fmtShortDate(view.person.last_met_date)}
+        </span>
+        <span class="meta-cell">
+          <Icon name="users" size={14} />
+          {view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}
+        </span>
       </div>
       <!-- One unified tag row: roles (filled), trajectory (outlined),
            free tags (white), with × removals and an inline add input.
@@ -441,10 +478,39 @@
                 />
               </span>
               {#if f.due_date}<span class="datepill due">due {fmtShortDate(f.due_date)}</span>{/if}
+              <button class="row-del" onclick={() => deleteFollowup(f.id)} aria-label="Delete followup" title="Delete">
+                <Icon name="trash" size={12} />
+              </button>
             </li>
           {/each}
         </ul>
       {/if}
+
+      <!-- Add a new followup inline. -->
+      <div class="followup-new">
+        <input
+          class="new-body"
+          type="text"
+          placeholder="Add a followup…"
+          bind:value={newFollowupBody}
+          onkeydown={(e) => e.key === 'Enter' && createFollowup()}
+          disabled={creatingFollowup}
+        />
+        <input
+          class="new-due"
+          type="date"
+          bind:value={newFollowupDue}
+          disabled={creatingFollowup}
+          aria-label="Due date (optional)"
+        />
+        <button
+          class="btn btn-primary small"
+          onclick={createFollowup}
+          disabled={creatingFollowup || !newFollowupBody.trim()}
+        >
+          {creatingFollowup ? '…' : 'Add'}
+        </button>
+      </div>
     {:else}
       {#if view.closedFollowups.length === 0}
         <p class="muted small empty-line">No completed followups yet.</p>
@@ -470,6 +536,9 @@
               {#if f.completed_at}
                 <span class="datepill done-date">{f.status} {fmtShortDate(f.completed_at)}</span>
               {/if}
+              <button class="row-del" onclick={() => deleteFollowup(f.id)} aria-label="Delete followup" title="Delete">
+                <Icon name="trash" size={12} />
+              </button>
             </li>
           {/each}
         </ul>
@@ -805,6 +874,32 @@
     color: var(--muted);
   }
   .followup-tabs button.active .count { background: rgba(67, 56, 202, 0.10); color: var(--accent); }
+  .row-del {
+    background: transparent;
+    border: 0;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .followup-row:hover .row-del { opacity: 1; }
+  .row-del:hover { color: var(--danger); background: var(--hover); }
+  .followup-new {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .followup-new .new-body { flex: 1; }
+  .followup-new .new-due { width: 150px; }
+  @media (max-width: 720px) {
+    .followup-new { flex-direction: column; align-items: stretch; }
+    .followup-new .new-due { width: 100%; }
+  }
 
   /* ──────────────────────────────────────────── shared bits */
   .datepill {
