@@ -637,6 +637,79 @@ Re-embed the kept person's vector since context changed.
 
 ---
 
+## J. Transcript rendering: speaker labels + two-column layout
+
+**Why.** Current rendering looks like:
+
+```
+[microphone] Is that right?
+[speaker] Based in Berlin?
+[microphone] Okay.
+[speaker] I just traveled for the weekend.
+```
+
+`[microphone]` is the user (the device's mic input — that's Sean), and
+`[speaker]` is the other person on the call (their voice came through
+the speaker output). The bracketed labels are noisy and the conversation
+doesn't read naturally.
+
+**Goal.** Re-render transcripts as a two-column layout:
+
+```
+You    Is that right?
+Them   Based in Berlin?
+You    Okay.
+Them   I just traveled for the weekend.
+```
+
+- Substitute `microphone` → `You`, `speaker` → `Them`, and any other
+  diarization label → the label itself (sometimes Granola assigns
+  "Speaker A" / "Speaker B" or a real name).
+- Two columns: speaker on the left, utterance on the right.
+- Speaker label visually distinct from the spoken text — smaller, muted
+  color, monospace or uppercase tracking. The utterance is regular body
+  text, left-aligned to the right of the speaker column.
+- Repeat speakers don't suppress the label (keeps each turn scannable).
+- Long utterances wrap; the speaker column stays a fixed width
+  (~56px) so the right column aligns.
+
+**Implementation.** A new `<TranscriptView text={transcript} />`
+component used wherever we currently render `transcript` or
+`transcript_preview`. Parse the `[label] text` pattern line by line
+(the existing `transcriptToString` in `src/lib/granola.ts` produces
+exactly that format). Map labels at the boundary:
+
+```ts
+const SPEAKER_LABEL: Record<string, string> = {
+  microphone: 'You',
+  speaker: 'Them',
+};
+function prettyLabel(raw: string): string {
+  const lo = raw.toLowerCase();
+  return SPEAKER_LABEL[lo] ?? raw;
+}
+```
+
+Render with CSS grid (`grid-template-columns: 56px 1fr; gap: 8px 12px`).
+Each turn becomes two grid cells. The component handles lines without a
+`[label]` (rare — diarization didn't tag them) by rendering them in the
+right column with no left label.
+
+**Touch points.**
+- `pages/src/lib/components/TranscriptView.svelte` — new component.
+- `pages/src/routes/notes/+page.svelte` — replace the `<pre
+  class="transcript">` block. Pairs naturally with TODO G1 (tabbed
+  Summary / Transcript view).
+- `src/lib/granola.ts` — leave `transcriptToString` as-is; rendering
+  is purely a UI concern. (If we ever switch the on-disk format,
+  also support a structured `Array<{label, text}>` shape directly.)
+
+**Optional polish.** Slightly indent / tint the "You" rows differently
+from "Them" rows so it scans like a chat log. Keep it subtle — the
+speaker column already does most of the disambiguation.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
