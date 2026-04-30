@@ -520,9 +520,13 @@ as a chronology of meetings.
 - For processed items: use `meetings.recorded_at` (already what
   `/api/queue/processed` returns).
 
-Sort the lists by meeting date descending so the freshest real
-conversations float to the top. Falls back to queue `created_at` only
-if the note timestamp is missing.
+Sort **every list** (Needs review, Processed, Dismissed) by meeting
+date descending — newest conversation at the top — using the
+`meetingDate(item)` helper above. Falls back to queue `created_at`
+only if the note timestamp is missing. The processed list already
+sorts by `meetings.recorded_at DESC` server-side; the queue list
+needs either a client-side sort after fetch or a `?sort=meeting_date`
+parameter on the list endpoint.
 
 **Touch points.**
 - `pages/src/routes/notes/+page.svelte` — adjust `listLabel` /
