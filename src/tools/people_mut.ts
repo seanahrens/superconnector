@@ -60,6 +60,9 @@ interface UpdateInput {
   needs_replacement?: string;
   offers_replacement?: string;
   geo?: string;
+  home_location?: string;
+  work_location?: string;
+  work_org?: string;
   roles_set?: string[];
   trajectory_tags_set?: string[];
   status_patch?: Record<string, unknown>;
@@ -76,6 +79,9 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
       display_name: { type: 'string' },
       email: { type: 'string' },
       phone: { type: 'string', description: 'Phone number; stored E.164 normalized.' },
+      home_location: { type: 'string', description: 'Where they live, e.g. "Berlin, DE".' },
+      work_location: { type: 'string', description: 'Where they work, e.g. "Boulder, CO" or "Remote".' },
+      work_org: { type: 'string', description: 'Organization they work at.' },
       context_replacement: { type: 'string' },
       context_append: { type: 'string' },
       needs_replacement: { type: 'string' },
@@ -97,6 +103,9 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     const newEmail = input.email ? input.email.toLowerCase() : existing.primary_email;
     const newGeo = input.geo ?? existing.geo;
     const newPhone = input.phone !== undefined ? normalizePhone(input.phone) : existing.phone;
+    const newHome = input.home_location !== undefined ? (input.home_location.trim() || null) : existing.home_location;
+    const newWorkLoc = input.work_location !== undefined ? (input.work_location.trim() || null) : existing.work_location;
+    const newWorkOrg = input.work_org !== undefined ? (input.work_org.trim() || null) : existing.work_org;
     const newRoles = input.roles_set !== undefined ? input.roles_set : parseJsonArray(existing.roles);
     const newTraj = input.trajectory_tags_set !== undefined ? input.trajectory_tags_set : parseJsonArray(existing.trajectory_tags);
     const newStatus = input.status_patch ? { ...parseJsonObject(existing.status), ...input.status_patch } : parseJsonObject(existing.status);
@@ -114,15 +123,19 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     await env.DB.prepare(
       `UPDATE people SET
          display_name = ?1, primary_email = ?2, geo = ?3, phone = ?4,
-         roles = ?5, trajectory_tags = ?6, status = ?7,
-         context = ?8, needs = ?9, offers = ?10,
-         context_manual_override = ?11, updated_at = ?12
-       WHERE id = ?13`,
+         home_location = ?5, work_location = ?6, work_org = ?7,
+         roles = ?8, trajectory_tags = ?9, status = ?10,
+         context = ?11, needs = ?12, offers = ?13,
+         context_manual_override = ?14, updated_at = ?15
+       WHERE id = ?16`,
     ).bind(
       newDisplayName,
       newEmail,
       newGeo,
       newPhone,
+      newHome,
+      newWorkLoc,
+      newWorkOrg,
       JSON.stringify(newRoles),
       JSON.stringify(newTraj),
       JSON.stringify(newStatus),

@@ -192,7 +192,42 @@
             }}
           />
         </span>
-        {#if view.person.geo}<span class="meta-cell">{view.person.geo}</span>{/if}
+        <span class="meta-cell">
+          🏠
+          <EditableField
+            value={view.person.home_location}
+            placeholder="add home"
+            label="Edit home location"
+            onSave={async (next) => {
+              await api.patch(`/api/people/${view.person.id}`, { home_location: next });
+              await onChanged();
+            }}
+          />
+        </span>
+        <span class="meta-cell">
+          💼
+          <EditableField
+            value={view.person.work_org}
+            placeholder="add org"
+            label="Edit work org"
+            onSave={async (next) => {
+              await api.patch(`/api/people/${view.person.id}`, { work_org: next });
+              await onChanged();
+            }}
+          />
+          {#if view.person.work_org || view.person.work_location}
+            <span class="muted">·</span>
+          {/if}
+          <EditableField
+            value={view.person.work_location}
+            placeholder="add work location"
+            label="Edit work location"
+            onSave={async (next) => {
+              await api.patch(`/api/people/${view.person.id}`, { work_location: next });
+              await onChanged();
+            }}
+          />
+        </span>
         <span class="meta-cell">last met {fmtShortDate(view.person.last_met_date)}</span>
         <span class="meta-cell">{view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}</span>
       </div>
@@ -311,17 +346,16 @@
     </section>
   </div>
 
-  <!-- ===================================== RECENT MEETINGS w/ SIGNALS -->
+  <!-- ======================================================== RECENT MEETINGS -->
   <section class="card">
     <header class="card-hd">
       <h3><span class="hd-dot meeting-dot"></span>Recent meetings</h3>
     </header>
-    {#if view.recentMeetings.length === 0 && view.recentSignals.length === 0}
+    {#if view.recentMeetings.length === 0}
       <p class="muted small empty-line">No meetings recorded yet.</p>
     {:else}
       <ol class="timeline">
         {#each view.recentMeetings as m}
-          {@const sigs = signalsByMeeting.map.get(m.id) ?? []}
           <li class="timeline-row">
             <div class="timeline-rail">
               <span class="datepill">{fmtShortDate(m.recorded_at)}</span>
@@ -332,54 +366,35 @@
                 <span>· {m.source}</span>
               </div>
               <div class="meeting-summary">{m.summary ?? 'No summary captured.'}</div>
-              {#if sigs.length > 0}
-                <ul class="signals">
-                  {#each sigs as s}
-                    <li class="signal-row">
-                      <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
-                      <span class="signal-body">{s.body}</span>
-                      {#if s.confidence != null}
-                        <span class="confidence" title="confidence">
-                          <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
-                          <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
-                        </span>
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
             </div>
           </li>
         {/each}
-
-        {#if signalsByMeeting.orphans.length > 0}
-          <li class="timeline-row">
-            <div class="timeline-rail">
-              <span class="datepill">manual</span>
-            </div>
-            <div class="timeline-body">
-              <div class="meeting-meta muted small">
-                <span class="chip-mini">other</span>
-                <span>· dictation / chat</span>
-              </div>
-              <ul class="signals">
-                {#each signalsByMeeting.orphans as s}
-                  <li class="signal-row">
-                    <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
-                    <span class="signal-body">{s.body}</span>
-                    {#if s.confidence != null}
-                      <span class="confidence" title="confidence">
-                        <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
-                        <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
-                      </span>
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-            </div>
-          </li>
-        {/if}
       </ol>
+    {/if}
+  </section>
+
+  <!-- ======================================================== SIGNALS -->
+  <section class="card">
+    <header class="card-hd">
+      <h3><span class="hd-dot signal-dot"></span>Signals</h3>
+    </header>
+    {#if view.recentSignals.length === 0}
+      <p class="muted small empty-line">Nothing extracted yet.</p>
+    {:else}
+      <ul class="signals">
+        {#each view.recentSignals as s}
+          <li class="signal-row">
+            <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
+            <span class="signal-body">{s.body}</span>
+            {#if s.confidence != null}
+              <span class="confidence" title="confidence">
+                <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
+                <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
+              </span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     {/if}
   </section>
 

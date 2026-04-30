@@ -21,6 +21,9 @@ export interface PersonRow {
   avatar_url: string | null;
   avatar_source: string | null;
   phone: string | null;
+  home_location: string | null;
+  work_location: string | null;
+  work_org: string | null;
   created_at: string;
   updated_at: string;
 }

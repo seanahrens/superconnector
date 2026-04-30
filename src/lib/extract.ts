@@ -23,6 +23,9 @@ Output shape (JSON, exactly this schema):
     "offers_replacement"?: string,
     "roles_add"?: string[],
     "trajectory_tags_add"?: string[],
+    "home_location"?: string,         // city/area where they LIVE
+    "work_location"?: string,         // city/area where they WORK ("Remote" if remote)
+    "work_org"?: string,              // organization they work at, distinct from roles
     "status_patch"?: object
   },
   "signals": [
@@ -37,6 +40,9 @@ Output shape (JSON, exactly this schema):
     "offers_replacement"?: string,
     "roles_add"?: string[],
     "trajectory_tags_add"?: string[],
+    "home_location"?: string,
+    "work_location"?: string,
+    "work_org"?: string,
     "status_patch"?: object
   },
   "user_signals"?: [
@@ -104,6 +110,9 @@ export interface ExtractedPersonUpdates {
   offers_replacement?: string;
   roles_add?: string[];
   trajectory_tags_add?: string[];
+  home_location?: string;
+  work_location?: string;
+  work_org?: string;
   status_patch?: Record<string, unknown>;
 }
 

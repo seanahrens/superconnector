@@ -74,6 +74,9 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
 
     const newNeeds = updates.needs_replacement ?? person.needs;
     const newOffers = updates.offers_replacement ?? person.offers;
+    const newHome = updates.home_location ?? person.home_location ?? null;
+    const newWorkLoc = updates.work_location ?? person.work_location ?? null;
+    const newWorkOrg = updates.work_org ?? person.work_org ?? null;
 
     await env.DB.prepare(
       `UPDATE people
@@ -84,8 +87,11 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
            context = ?5,
            needs = ?6,
            offers = ?7,
-           updated_at = ?8
-       WHERE id = ?9`,
+           home_location = ?8,
+           work_location = ?9,
+           work_org = ?10,
+           updated_at = ?11
+       WHERE id = ?12`,
     ).bind(
       newDisplayName,
       JSON.stringify(newRoles),
@@ -94,6 +100,9 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
       newContext,
       newNeeds,
       newOffers,
+      newHome,
+      newWorkLoc,
+      newWorkOrg,
       now,
       personId,
     ).run();
@@ -190,12 +199,17 @@ async function applySelfUpdates(
     }
     const newNeeds = updates.needs_replacement ?? me.needs;
     const newOffers = updates.offers_replacement ?? me.offers;
+    const newHome = updates.home_location ?? me.home_location ?? null;
+    const newWorkLoc = updates.work_location ?? me.work_location ?? null;
+    const newWorkOrg = updates.work_org ?? me.work_org ?? null;
 
     await env.DB.prepare(
       `UPDATE people
          SET display_name = ?1, roles = ?2, trajectory_tags = ?3, status = ?4,
-             context = ?5, needs = ?6, offers = ?7, updated_at = ?8
-       WHERE id = ?9`,
+             context = ?5, needs = ?6, offers = ?7,
+             home_location = ?8, work_location = ?9, work_org = ?10,
+             updated_at = ?11
+       WHERE id = ?12`,
     ).bind(
       newDisplayName,
       JSON.stringify(newRoles),
@@ -204,6 +218,9 @@ async function applySelfUpdates(
       newContext,
       newNeeds,
       newOffers,
+      newHome,
+      newWorkLoc,
+      newWorkOrg,
       now,
       meId,
     ).run();
