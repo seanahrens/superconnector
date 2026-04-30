@@ -94,7 +94,7 @@
     bind:this={textareaEl}
     onkeydown={onKey}
     rows="6"
-    placeholder="e.g. Hale Guyer, Community Operations at FAR Labs. Self-described superconnector. Offering free office space in exchange for tooling help…"
+    placeholder="e.g. Jane Doe, founder at Acme. Based in Berlin. Raising a seed round. Looking for a technical cofounder."
     disabled={submitting}
   ></textarea>
 
