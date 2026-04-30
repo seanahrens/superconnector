@@ -9,3 +9,12 @@ binding = "ASSETS"
 
 [observability]
 enabled = true
+
+# Service binding to the Worker API, so the proxy in
+# src/routes/api/[...path]/+server.ts can dispatch directly without an HTTP
+# round-trip via *.workers.dev. Worker-to-worker fetch over the public
+# workers.dev hostname returns Cloudflare's 404 placeholder; the binding
+# bypasses that.
+[[services]]
+binding = "WORKER_API"
+service = "superconnector"

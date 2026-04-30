@@ -208,29 +208,23 @@ green "  deployed at $worker_url"
 # 8. Pages env (local .env for dev + Pages-worker secrets for prod)
 # ──────────────────────────────────────────────────────────────────────────────
 # SECURITY: do NOT use PUBLIC_* env vars for the API token. Anything PUBLIC_
-# is bundled into client JS and exposed to anyone who loads the page. Use
-# private vars (WEB_AUTH_SECRET, WORKER_API_BASE) consumed only by
-# pages/src/hooks.server.ts and the server-side proxy at
-# pages/src/routes/api/[...path]/+server.ts.
-bold "▸ wiring SvelteKit Pages env (private vars, server-side only)"
+# is bundled into client JS and exposed to anyone who loads the page. The
+# Pages worker reaches the API via a service binding (`[[services]]` in
+# pages/wrangler.toml — already committed) plus the WEB_AUTH_SECRET as a
+# private secret. The Worker URL is NOT needed.
+bold "▸ wiring SvelteKit Pages env (private secret, server-side only)"
 cat > pages/.env <<EOF
 WEB_AUTH_SECRET="$web_auth_secret"
-WORKER_API_BASE="$worker_url"
 EOF
 chmod 600 pages/.env
 dim "  wrote pages/.env (used by \`vite dev\` for local development)"
 
-# Push the same values as Pages-worker secrets so they're available at runtime
+# Push WEB_AUTH_SECRET as a Pages-worker secret so it's available at runtime
 # in production (read via $env/dynamic/private).
 if printf '%s' "$web_auth_secret" | (cd pages && $WRANGLER secret put WEB_AUTH_SECRET 2>&1) | tail -3 | grep -qi "success\|already"; then
   dim "  pushed WEB_AUTH_SECRET to pages worker"
 else
   warn "  pushing WEB_AUTH_SECRET to pages worker may have failed; rerun manually with: cd pages && wrangler secret put WEB_AUTH_SECRET"
-fi
-if printf '%s' "$worker_url" | (cd pages && $WRANGLER secret put WORKER_API_BASE 2>&1) | tail -3 | grep -qi "success\|already"; then
-  dim "  pushed WORKER_API_BASE to pages worker"
-else
-  warn "  pushing WORKER_API_BASE to pages worker may have failed; rerun manually with: cd pages && wrangler secret put WORKER_API_BASE"
 fi
 
 # Strip any leftover legacy PUBLIC_API_* lines from pages/wrangler.toml [vars]

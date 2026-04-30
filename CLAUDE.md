@@ -58,10 +58,15 @@ docs/                   GOTCHAS.md, TODOS.md
   Browser prompts natively. Password = `WEB_AUTH_SECRET` (any username).
   Fails CLOSED with 503 if the secret is unset.
 - **Browser → API** flows through a same-origin server-side proxy at
-  `pages/src/routes/api/[...path]/+server.ts`. It attaches
-  `Authorization: Bearer <WEB_AUTH_SECRET>` from `$env/dynamic/private`
-  (vars `WEB_AUTH_SECRET`, `WORKER_API_BASE`). The bearer never reaches the
-  client. The old `PUBLIC_API_TOKEN` is gone — do not reintroduce it.
+  `pages/src/routes/api/[...path]/+server.ts`. It dispatches to the Worker
+  API via a **service binding** (`pages/wrangler.toml` `[[services]]`,
+  binding `WORKER_API`, service `superconnector`) and attaches
+  `Authorization: Bearer <WEB_AUTH_SECRET>` from `$env/dynamic/private`. The
+  bearer never reaches the client. The old `PUBLIC_API_TOKEN` is gone — do
+  not reintroduce it. **Do not "fix" this by switching back to HTTP fetch
+  on `*.workers.dev`** — Cloudflare returns its generic 404 placeholder
+  ("There is nothing here yet") for worker-to-worker subrequests on the
+  public hostname; service bindings are the only reliable path.
 - **MCP** uses its own `MCP_SECRET` bearer; both this and `requireAuth` now
   fail CLOSED if their secret is unset and `ENVIRONMENT !== 'development'`.
 - The Worker no longer ships a CORS allow-list — all browser traffic is

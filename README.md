@@ -125,19 +125,28 @@ Two layers, both required:
 2. **Worker API (`superconnector`)** is gated by `Authorization: Bearer
    <WEB_AUTH_SECRET>`. Browser traffic does NOT call the Worker directly —
    `pages/src/routes/api/[...path]/+server.ts` is a same-origin server-side
-   proxy that attaches the bearer for you. The token never leaves the Pages
-   worker. MCP clients (claude-desktop) supply the token directly.
+   proxy that attaches the bearer for you, and dispatches to the Worker via
+   a **service binding** declared in `pages/wrangler.toml` (`[[services]]`,
+   binding `WORKER_API`, service `superconnector`). The token never leaves
+   the Pages worker. MCP clients (claude-desktop) supply the token directly.
 
-Required Pages-worker secrets (set with `npx wrangler secret put` in the
+   **Why a service binding and not an HTTP fetch on `*.workers.dev`?** When
+   one Worker tries to fetch another Worker on the same account via the
+   public `*.workers.dev` hostname, Cloudflare returns its generic 404
+   placeholder ("There is nothing here yet"). Service bindings dispatch
+   directly through the platform and bypass that.
+
+Required Pages-worker secret (set with `npx wrangler secret put` in the
 `pages/` directory):
 
 | secret | value |
 |---|---|
 | `WEB_AUTH_SECRET` | same string as the Worker (also used for basic auth) |
-| `WORKER_API_BASE` | full URL of the Worker, e.g. `https://superconnector.<acct>.workers.dev` |
 
-The old `PUBLIC_API_TOKEN` / `PUBLIC_API_BASE` env vars are gone — they
-leaked the bearer to anyone who loaded the page. If you're running an older
+The Worker URL itself is no longer needed as a secret — the service binding
+in `pages/wrangler.toml` handles dispatch by service name. The old
+`PUBLIC_API_TOKEN` / `PUBLIC_API_BASE` / `WORKER_API_BASE` vars are gone —
+they leaked the bearer or are obsolete. If you're running an older
 deployment, rotate `WEB_AUTH_SECRET` after upgrading.
 
 For zero-trust style edge auth, `Cloudflare Access` (free, ≤50 users) can sit
