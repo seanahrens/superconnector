@@ -140,7 +140,52 @@ keyboard conventions. Enter should send; Shift-Enter should insert a newline.
 
 ---
 
-## 4. Cloudflare Access in front of Worker + Pages
+## 4. Daily-email sender name + LLM-generated subject
+
+The daily email currently sends with `From: <env.EMAIL_FROM>` (just the bare
+address) and a subject line built by `subject(now, meetingCount, weekly)` in
+`src/cron/daily_email.ts` (around line 46) that reads e.g.
+`[superconnector] 2026-04-30 — 3 meetings + weekly digest`.
+
+**Goal:**
+
+- **Sender name** should display as `SuperConnector` in the user's inbox, not
+  the raw email address. `sendEmail()` in `src/lib/email.ts` already accepts
+  an optional `fromName` and renders `From: SuperConnector <addr>` when
+  passed. Just plumb a `fromName: 'SuperConnector'` through from
+  `daily_email.ts`.
+- **Subject** should drop the `[superconnector]` prefix and stop encoding
+  the date or meeting count. Instead, generate a single short, content-led
+  subject (≤ 70 chars, no emoji) that captures one or two key takeaways from
+  the email body — e.g. *"Brief Sarah Chen on her funder thesis; intro for
+  Alex's cofounder search"* or *"Quiet day — two stale founder followups due"*.
+- Generate via Anthropic Haiku 4.5 with prompt caching. Pass it the rendered
+  plaintext body (already built in `daily_email.ts` as `text`) plus a
+  short instruction. Use `jsonCall` from `src/lib/anthropic.ts` with a tiny
+  schema like `{"subject": string}` so we don't have to parse free text.
+- Fall back to a deterministic subject (something like
+  `Daily — N meetings`) if the LLM call fails, so a transient API issue
+  doesn't block the send.
+
+**Touch points.**
+
+- `src/cron/daily_email.ts` — replace the `subject(...)` helper with an async
+  `subjectFor(env, text, includeWeekly)` that calls Haiku, awaited before
+  `sendEmail`. Also pass `fromName: 'SuperConnector'`.
+- `src/lib/email.ts` — no changes; `fromName` already exists.
+
+**Gotchas.**
+
+- The subject generator runs once per day per send. Cost is negligible, but
+  prompt-cache the system message anyway for cleanliness.
+- Don't pass the HTML body — it's much longer and the markup just confuses
+  the model. Pass the plaintext rendering.
+- Cloudflare Email Workers may reject very long subjects; cap to ≤ 200 chars
+  client-side to be safe.
+
+---
+
+## 5. Cloudflare Access in front of Worker + Pages
 
 Single-user bearer token (`WEB_AUTH_SECRET`) is fine but the Pages app shows
 its UI to anyone with the URL (data is still gated, but it's noise). Adding
@@ -150,7 +195,7 @@ README once enabled.
 
 ---
 
-## 5. Commit `database_id` to `wrangler.toml`
+## 6. Commit `database_id` to `wrangler.toml`
 
 The setup script patches the D1 `database_id` into `wrangler.toml` locally
 and the user's Mac repeatedly conflicts with upstream pulls. Decide whether
@@ -161,7 +206,7 @@ ritual. Leaning toward committing it.
 
 ---
 
-## 6. Voicebox into cron-hub (deferred)
+## 7. Voicebox into cron-hub (deferred)
 
 Once `voicebox` (separate repo) needs scheduled jobs and we'd otherwise blow
 the cron limit, deploy `cron-hub/` and migrate both projects' triggers into
@@ -170,7 +215,7 @@ so it's deployable when needed.
 
 ---
 
-## 7. Followups: nudges and re-engagement
+## 8. Followups: nudges and re-engagement
 
 The schema has `followups` and `last_met_date`, the daily email already
 includes due-today followups, but there's nothing yet for:
@@ -183,7 +228,7 @@ useful.
 
 ---
 
-## 8. Empty-state polish
+## 9. Empty-state polish
 
 After cleanup the people list and queue can be empty. Both screens already
 handle this, but the master-chat empty state could suggest example queries
