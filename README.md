@@ -6,7 +6,10 @@ notes from Granola, calendar from Proton ICS, sends a daily email via
 Cloudflare Email Workers, and ships with both an MCP server and a SvelteKit
 web UI on Cloudflare Pages.
 
-Architecture in `/root/.claude/plans/yes-please-create-a-joyful-horizon.md`.
+**Working on this repo as an AI agent?** Read `CLAUDE.md`, then
+`docs/GOTCHAS.md` and `docs/TODOS.md`. Original architecture spec lives at
+`/root/.claude/plans/yes-please-create-a-joyful-horizon.md` for historical
+context but the docs are the current source of truth.
 
 ## Setup
 
