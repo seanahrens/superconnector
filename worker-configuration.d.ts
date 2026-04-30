@@ -6,6 +6,7 @@ export interface Env {
   VECTORS: VectorizeIndex;
   AI: Ai;
   EMAIL: SendEmail;
+  BACKUPS: R2Bucket;
   ENVIRONMENT: string;
 
   // Secrets

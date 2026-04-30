@@ -1098,6 +1098,69 @@ Two layout fixes on `/people` and `/people/new`:
 
 ---
 
+## R. Modernize the any/all selector (tag combine mode)
+
+`pages/src/routes/people/+page.svelte` currently uses a native `<select>`
+with two options ("any", "all") for tag-match mode. It looks like a
+form input out of the late-90s and gives no visual sense of which
+mode you're in until you open it.
+
+**Gold standard pattern: segmented control (a.k.a. pill toggle).**
+Used by Linear, Notion, Apple's Settings — two connected pills,
+exactly one filled. Always visible, one tap to flip.
+
+```
+┌────────────┬────────────┐
+│  match any │ match all  │   ← currently "any" is filled
+└────────────┴────────────┘
+```
+
+**Goal.**
+
+A reusable `<SegmentedToggle>` component:
+
+```svelte
+<SegmentedToggle
+  options={[
+    { value: 'or',  label: 'Match any' },
+    { value: 'and', label: 'Match all' },
+  ]}
+  bind:selected={tagMode}
+/>
+```
+
+**Visual rules.**
+- Single rounded container (`border-radius: 8px`), 1px border.
+- Each segment is a button, equal-width via `flex: 1`.
+- The selected segment fills with the accent color and white text.
+- Unselected segments are transparent over the container's
+  background, muted color.
+- 28–32px tall — small enough to live inline with a label.
+- `role="radiogroup"`, each option `role="radio"` with
+  `aria-checked` and arrow-key navigation.
+- Clicking the already-selected option is a no-op (don't toggle).
+
+**Where to use it.**
+1. Tag combine mode (`any` / `all`) — the immediate ask.
+2. Future-friendly hookup point: role combine mode (currently OR
+   only — add a similar toggle when role count grows).
+3. Followups status filter on `/followups` (open / done /
+   dropped — three segments).
+4. Notes tabs on `/notes` are already this pattern manually; could
+   be migrated to the same component for consistency.
+
+**Touch points.**
+- `pages/src/lib/components/SegmentedToggle.svelte` — new component.
+- `pages/src/routes/people/+page.svelte` — replace the native
+  `<select bind:value={tagMode}>` next to the "Tags" label.
+- Optional: same in `/followups`.
+
+**Polish.** Add a smooth ~120ms transform/background transition on
+the selection move so flipping feels good — but respect
+`prefers-reduced-motion`.
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`

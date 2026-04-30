@@ -6,6 +6,8 @@
   import ChatPane from './ChatPane.svelte';
   import Icon from './Icon.svelte';
   import MergeModal from './MergeModal.svelte';
+  import PersonAvatar from './PersonAvatar.svelte';
+  import ContactRow from './ContactRow.svelte';
 
   interface Props {
     view: PersonView;
@@ -90,6 +92,12 @@
 <div class="profile">
   <header class="hd">
     <div class="title-row">
+      <PersonAvatar
+        personId={view.person.id}
+        name={view.person.display_name}
+        avatarUrl={view.person.avatar_url}
+        size={48}
+      />
       <h1>{view.person.display_name ?? '(unnamed)'}</h1>
       <span class="spacer"></span>
       <button class="btn small" onclick={() => (mergeOpen = true)} title="Merge a duplicate into this person">
@@ -106,6 +114,7 @@
       {#each view.roles as r}<span class="chip active">{r}</span>{/each}
       {#each view.trajectoryTags as t}<span class="chip">{t}</span>{/each}
     </div>
+    <ContactRow email={view.person.primary_email} phone={view.person.phone} />
   </header>
 
   <section>

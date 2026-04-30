@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../worker-configuration';
 import { runIngest } from './cron/ingest';
 import { runDailyEmail } from './cron/daily_email';
+import { runBackup } from './cron/backup';
 import { handleMcp } from './mcp/server';
 import { requireAuth } from './api/auth';
 import people from './api/people';
@@ -10,6 +11,7 @@ import tags from './api/tags';
 import followups from './api/followups';
 import chat from './api/chat';
 import digest from './api/digest';
+import notes from './api/notes';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -38,6 +40,7 @@ app.route('/api/tags', tags);
 app.route('/api/followups', followups);
 app.route('/api/chat', chat);
 app.route('/api/digest', digest);
+app.route('/api/notes', notes);
 
 // Manual triggers (auth-gated) for testing the cron paths.
 app.post('/api/run/ingest', requireAuth, async (c) => {
@@ -48,6 +51,16 @@ app.post('/api/run/ingest', requireAuth, async (c) => {
     const message = err instanceof Error ? err.message : String(err);
     console.error('ingest failed', message);
     return c.json({ error: message }, 500);
+  }
+});
+
+// Manual trigger for the weekly D1 → R2 backup.
+app.post('/api/run/backup', requireAuth, async (c) => {
+  try {
+    const result = await runBackup(c.env);
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
   }
 });
 
@@ -177,18 +190,36 @@ app.get('/api/run/check-ics', requireAuth, async (c) => {
 });
 
 // Diagnostic: test Granola API connectivity and show raw response shape.
+// Pass ?id=<noteId> to fetch a single note (with all common include params)
+// so we can see what summary-like field actually carries the meeting summary.
 app.get('/api/run/check-granola', requireAuth, async (c) => {
   const key = c.env.GRANOLA_API_KEY;
   if (!key) return c.json({ error: 'GRANOLA_API_KEY not set' }, 500);
+  const url = new URL(c.req.url);
+  const id = url.searchParams.get('id');
   try {
-    const url = 'https://public-api.granola.ai/v1/notes';
-    const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
-    });
-    const text = await resp.text();
-    let parsed: unknown;
-    try { parsed = JSON.parse(text); } catch { parsed = text; }
-    return c.json({ status: resp.status, url, body: parsed });
+    const targets = id
+      ? [
+          `https://public-api.granola.ai/v1/notes/${encodeURIComponent(id)}`,
+          `https://public-api.granola.ai/v1/notes/${encodeURIComponent(id)}?include=transcript`,
+          `https://public-api.granola.ai/v1/notes/${encodeURIComponent(id)}?include=summary`,
+          `https://public-api.granola.ai/v1/notes/${encodeURIComponent(id)}?include=body`,
+          `https://public-api.granola.ai/v1/notes/${encodeURIComponent(id)}?include=markdown`,
+          `https://public-api.granola.ai/v1/notes/${encodeURIComponent(id)}?include=notes`,
+        ]
+      : ['https://public-api.granola.ai/v1/notes'];
+    const out: Array<{ url: string; status: number; keys?: string[]; body?: unknown }> = [];
+    for (const target of targets) {
+      const resp = await fetch(target, {
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+      });
+      const text = await resp.text();
+      let parsed: unknown;
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+      const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed as object) : undefined;
+      out.push({ url: target, status: resp.status, keys, body: parsed });
+    }
+    return c.json({ probes: out });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
@@ -220,6 +251,11 @@ async function handleScheduled(event: ScheduledController, env: Env): Promise<vo
   }
   if (cron === '0 13 * * *') {
     await runDailyEmail(env);
+    return;
+  }
+  if (cron === '0 9 * * SUN') {
+    const result = await runBackup(env);
+    console.log('backup', result);
     return;
   }
 }

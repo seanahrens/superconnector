@@ -42,6 +42,13 @@ export interface GranolaNote {
   updated_at?: string;
   calendar_event: GranolaCalendarEvent | null;
   attendees: GranolaAttendee[];
+  // Granola returns summary as TWO fields (always present, no `include` needed):
+  //   summary_text — plain text
+  //   summary_markdown — markdown formatting (headings, bullets, etc.)
+  // We read both. `summary` is a virtual property added at the boundary in
+  // getNote() that prefers markdown when populated, else plain text.
+  summary_text?: string | null;
+  summary_markdown?: string | null;
   summary: string | null;
   // Array of turns when fetched with ?include=transcript; null otherwise.
   transcript: GranolaTranscriptTurn[] | null;
@@ -96,7 +103,13 @@ export class GranolaClient {
     if (!resp.ok) {
       throw new Error(`Granola getNote failed: ${resp.status} ${await resp.text()}`);
     }
-    return (await resp.json()) as GranolaNote;
+    const note = (await resp.json()) as GranolaNote;
+    // Backfill the virtual `summary` property from whichever real field
+    // Granola populated. Prefer markdown when present (richer rendering).
+    if (note.summary == null) {
+      note.summary = note.summary_markdown ?? note.summary_text ?? null;
+    }
+    return note;
   }
 }
 

@@ -26,6 +26,9 @@ export interface PersonView {
     meeting_count: number;
     custom_sort_position: string | null;
     context_manual_override: number;
+    avatar_url: string | null;
+    avatar_source: string | null;
+    phone: string | null;
     created_at: string;
     updated_at: string;
   };

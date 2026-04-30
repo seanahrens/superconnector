@@ -54,6 +54,7 @@ interface UpdateInput {
   person_id: string;
   display_name?: string;
   email?: string;
+  phone?: string;
   context_replacement?: string;
   context_append?: string;
   needs_replacement?: string;
@@ -74,6 +75,7 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
       person_id: { type: 'string' },
       display_name: { type: 'string' },
       email: { type: 'string' },
+      phone: { type: 'string', description: 'Phone number; stored E.164 normalized.' },
       context_replacement: { type: 'string' },
       context_append: { type: 'string' },
       needs_replacement: { type: 'string' },
@@ -94,6 +96,7 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     const newDisplayName = input.display_name ?? existing.display_name;
     const newEmail = input.email ? input.email.toLowerCase() : existing.primary_email;
     const newGeo = input.geo ?? existing.geo;
+    const newPhone = input.phone !== undefined ? normalizePhone(input.phone) : existing.phone;
     const newRoles = input.roles_set !== undefined ? input.roles_set : parseJsonArray(existing.roles);
     const newTraj = input.trajectory_tags_set !== undefined ? input.trajectory_tags_set : parseJsonArray(existing.trajectory_tags);
     const newStatus = input.status_patch ? { ...parseJsonObject(existing.status), ...input.status_patch } : parseJsonObject(existing.status);
@@ -110,15 +113,16 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
 
     await env.DB.prepare(
       `UPDATE people SET
-         display_name = ?1, primary_email = ?2, geo = ?3,
-         roles = ?4, trajectory_tags = ?5, status = ?6,
-         context = ?7, needs = ?8, offers = ?9,
-         context_manual_override = ?10, updated_at = ?11
-       WHERE id = ?12`,
+         display_name = ?1, primary_email = ?2, geo = ?3, phone = ?4,
+         roles = ?5, trajectory_tags = ?6, status = ?7,
+         context = ?8, needs = ?9, offers = ?10,
+         context_manual_override = ?11, updated_at = ?12
+       WHERE id = ?13`,
     ).bind(
       newDisplayName,
       newEmail,
       newGeo,
+      newPhone,
       JSON.stringify(newRoles),
       JSON.stringify(newTraj),
       JSON.stringify(newStatus),
@@ -148,4 +152,17 @@ function mergeArr(existing: string[], incoming: string[] | undefined): string[] 
   const set = new Set(existing);
   for (const x of incoming) set.add(x);
   return [...set];
+}
+
+function normalizePhone(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const startsPlus = trimmed.startsWith('+');
+  const digits = trimmed.replace(/[^\d]/g, '');
+  if (!digits) return null;
+  if (startsPlus) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return `+${digits}`;
 }

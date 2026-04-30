@@ -11,6 +11,7 @@ import { between } from '../lib/lexorank';
 import { nowIso } from '../lib/ulid';
 import { runTool } from '../tools';
 import { rankMergeCandidates, mergePeople } from '../lib/merge_people';
+import { resolveAndCacheAvatar } from '../lib/avatars';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -175,6 +176,18 @@ app.delete('/:id/tags/:tag_name', async (c) => {
   const tagName = decodeURIComponent(c.req.param('tag_name'));
   const out = await runTool(c.env, 'remove_tag', { person_id: id, tag_name: tagName });
   return c.json(out);
+});
+
+// Lazy avatar resolution. Returns the cached URL when one exists; otherwise
+// runs the resolution cascade (Gravatar → DiceBear initials) and caches it.
+app.get('/:id/avatar', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const r = await resolveAndCacheAvatar(c.env, id);
+    return c.json(r);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
 });
 
 // Merge candidates ranked by cheap regex/string heuristics (no LLM in the

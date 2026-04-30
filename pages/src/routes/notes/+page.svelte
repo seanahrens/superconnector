@@ -41,8 +41,16 @@
     display_name: string | null;
     primary_email: string | null;
   }
+  interface SkippedItem {
+    note_id: string;
+    disposition: string;
+    note_title: string | null;
+    note_created_at: string | null;
+    reason: string | null;
+    updated_at: string;
+  }
 
-  type Tab = 'pending' | 'processed' | 'dismissed';
+  type Tab = 'pending' | 'processed' | 'dismissed' | 'skipped';
 
   let tab = $state<Tab>('pending');
   let pending = $state<ConfirmationItem[]>([]);
@@ -50,11 +58,13 @@
   let processed = $state<ProcessedItem[]>([]);
   // Initialize counts as '—' so the tab buttons render at their final width
   // on first paint instead of going `0` → `16` and shifting layout.
-  let counts = $state<{ pending: number | string; processed: number | string; dismissed: number | string }>({
+  let counts = $state<{ pending: number | string; processed: number | string; dismissed: number | string; skipped: number | string }>({
     pending: '—',
     processed: '—',
     dismissed: '—',
+    skipped: '—',
   });
+  let skipped = $state<SkippedItem[]>([]);
   let loading = $state(true);
   let selected = $state<ConfirmationItem | null>(null);
   let counterpartName = $state('');
@@ -63,10 +73,11 @@
   let resolving = $state(false);
 
   async function loadAll() {
-    const [p, d, pr] = await Promise.all([
+    const [p, d, pr, sk] = await Promise.all([
       api.get<{ items: ConfirmationItem[] }>('/api/queue?status=pending'),
       api.get<{ items: ConfirmationItem[] }>('/api/queue?status=dismissed'),
       api.get<{ items: ProcessedItem[] }>('/api/queue/processed?limit=200'),
+      api.get<{ items: SkippedItem[] }>('/api/queue/skipped?limit=200'),
     ]);
     // Sort queue lists by meeting (note creation) date, newest first.
     const byMeetingDateDesc = (a: ConfirmationItem, b: ConfirmationItem) =>
@@ -74,7 +85,13 @@
     pending = [...p.items].sort(byMeetingDateDesc);
     dismissed = [...d.items].sort(byMeetingDateDesc);
     processed = pr.items;
-    counts = { pending: p.items.length, processed: pr.items.length, dismissed: d.items.length };
+    skipped = sk.items;
+    counts = {
+      pending: p.items.length,
+      processed: pr.items.length,
+      dismissed: d.items.length,
+      skipped: sk.items.length,
+    };
     if (selected) {
       const list = tab === 'pending' ? pending : tab === 'dismissed' ? dismissed : [];
       selected = list.find((i) => i.id === selected!.id) ?? list[0] ?? null;
@@ -178,6 +195,9 @@
       <button class="tab" class:active={tab === 'dismissed'} onclick={() => (tab = 'dismissed')}>
         Dismissed <span class="count">{counts.dismissed}</span>
       </button>
+      <button class="tab" class:active={tab === 'skipped'} onclick={() => (tab = 'skipped')}>
+        Skipped <span class="count">{counts.skipped}</span>
+      </button>
     </div>
 
     {#if loading}
@@ -205,6 +225,25 @@
                   <span> · {fmtDate(meetingDateOf(item))}</span>
                 </div>
               </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {:else if tab === 'skipped'}
+      {#if skipped.length === 0}
+        <div class="muted small" style="padding: 8px">no skipped notes</div>
+      {:else}
+        <ul class="list">
+          {#each skipped as s (s.note_id)}
+            <li>
+              <div class="processed-row">
+                <div class="title">{s.note_title ?? '(untitled)'}</div>
+                <div class="muted small">
+                  <span class="kind">{s.disposition.replace('_', ' ')}</span>
+                  <span> · {fmtDate(s.note_created_at ?? s.updated_at)}</span>
+                  {#if s.reason} · <span>{s.reason}</span>{/if}
+                </div>
+              </div>
             </li>
           {/each}
         </ul>
@@ -257,7 +296,9 @@
         <Icon name="arrow-left" size={14} /> back
       </button>
     {/if}
-    {#if tab === 'processed'}
+    {#if tab === 'skipped'}
+      <div class="muted">These notes were intentionally skipped during ingest (solo brainstorming, group meetings, or errors). Listed for transparency.</div>
+    {:else if tab === 'processed'}
       <div class="muted">Processed notes have been turned into people + meetings. Tap a row to open the person.</div>
     {:else if !selected}
       <div class="muted desktop-only">Pick an item.</div>
@@ -342,7 +383,7 @@
       <NoteContent
         summary={p.note?.summary}
         transcript={p.note?.transcript_preview}
-        transcriptIsPreview={true}
+        noteId={p.note?.id}
       />
 
     {:else if selected.kind === 'person_resolution'}
@@ -409,7 +450,7 @@
       <NoteContent
         summary={p.note?.summary}
         transcript={p.note?.transcript_preview}
-        transcriptIsPreview={true}
+        noteId={p.note?.id}
       />
 
     {:else if selected.kind === 'extraction_review'}

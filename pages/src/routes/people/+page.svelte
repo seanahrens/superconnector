@@ -5,6 +5,7 @@
   import { page } from '$app/stores';
   import PeopleList from '$components/PeopleList.svelte';
   import Icon from '$components/Icon.svelte';
+  import SegmentedToggle from '$components/SegmentedToggle.svelte';
 
   let items = $state<PersonListItem[]>([]);
   let allTags = $state<TagRow[]>([]);
@@ -67,20 +68,14 @@
 
 <div class="layout">
   <aside class="sidebar">
-    <div class="search-row">
-      <div class="search-wrap">
-        <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
-        <input
-          class="search-input"
-          type="search"
-          placeholder="Search name, email, context…"
-          bind:value={q}
-        />
-      </div>
-      <a href="/people/new" class="btn add-person" aria-label="Add a new person" title="Add a new person">
-        <Icon name="plus" size={16} />
-        <span class="add-label">add</span>
-      </a>
+    <div class="search-wrap">
+      <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
+      <input
+        class="search-input"
+        type="search"
+        placeholder="Search name, email, context…"
+        bind:value={q}
+      />
     </div>
 
     <!-- Sort: a small button that opens a popup of options with icons. The
@@ -141,10 +136,14 @@
         <div class="label row">
           <span>Tags</span>
           <span class="spacer"></span>
-          <select bind:value={tagMode} aria-label="Tag combine mode">
-            <option value="or">any</option>
-            <option value="and">all</option>
-          </select>
+          <SegmentedToggle
+            ariaLabel="Tag combine mode"
+            options={[
+              { value: 'or', label: 'Match any' },
+              { value: 'and', label: 'Match all' },
+            ]}
+            bind:selected={tagMode}
+          />
         </div>
         <div class="chips chips-tags">
           {#if allTags.length === 0}
@@ -176,6 +175,10 @@
         await load();
       }}
     />
+
+    <a href="/people/new" class="fab" aria-label="Add a new person" title="Add a new person">
+      <Icon name="plus" size={20} />
+    </a>
   </aside>
 
   <section class="content">
@@ -202,9 +205,39 @@
     background: white;
     overflow-y: auto;
     padding: 12px;
+    padding-bottom: 80px; /* leave room for the FAB */
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative;
+  }
+  .fab {
+    position: sticky;
+    bottom: 16px;
+    margin: 0 auto;
+    margin-top: auto;
+    align-self: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 20px rgba(67, 56, 202, 0.35);
+    transition: transform 120ms ease;
+    z-index: 5;
+  }
+  .fab:hover { background: var(--accent-hover); text-decoration: none; transform: translateY(-1px); }
+  @media (max-width: 720px) {
+    .fab {
+      position: fixed;
+      bottom: calc(16px + var(--safe-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .fab:hover { transform: translateX(-50%) translateY(-1px); }
   }
   .filters {
     display: flex;
@@ -227,12 +260,7 @@
     border-style: dashed;
   }
 
-  .search-row { display: flex; gap: 6px; align-items: stretch; }
-  .search-wrap { position: relative; display: flex; flex: 1; }
-  .add-person { flex-shrink: 0; }
-  @media (max-width: 720px) {
-    .add-label { display: none; }
-  }
+  .search-wrap { position: relative; display: flex; }
   .search-icon {
     position: absolute;
     left: 10px;
