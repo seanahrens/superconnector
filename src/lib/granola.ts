@@ -115,6 +115,22 @@ export function transcriptToString(
     .join('\n');
 }
 
+// SHA-256 of (title + summary + transcript) — cheap fingerprint we store with
+// each meeting so we can detect when the user has edited a Granola note since
+// the last ingest. Returns a hex string.
+export async function noteContentHash(note: GranolaNote): Promise<string> {
+  const title = note.title ?? '';
+  const summary = note.summary ?? '';
+  const transcript = transcriptToString(note.transcript) ?? '';
+  const blob = `${title}\n${summary}\n${transcript}`;
+  const buf = new TextEncoder().encode(blob);
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  const bytes = new Uint8Array(digest);
+  let hex = '';
+  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+  return hex;
+}
+
 // Returns true when the only attendee is the note owner (i.e. a solo note).
 export function isSoloNote(note: GranolaNote, userEmail: string | null): boolean {
   const ownerEmail = (note.owner?.email ?? '').toLowerCase();

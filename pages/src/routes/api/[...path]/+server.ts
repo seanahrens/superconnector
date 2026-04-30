@@ -23,8 +23,18 @@ async function proxy({ request, params, url }: Parameters<RequestHandler>[0]): P
   const base = (env.WORKER_API_BASE ?? '').replace(/\/$/, '');
   const secret = env.WEB_AUTH_SECRET;
   if (!base || !secret) {
+    const missing = [!base && 'WORKER_API_BASE', !secret && 'WEB_AUTH_SECRET']
+      .filter(Boolean)
+      .join(', ');
+    console.error(
+      `pages api proxy: missing required private env var(s): ${missing}. ` +
+        `Push with: cd pages && npx wrangler secret put <NAME>`,
+    );
     return new Response(
-      JSON.stringify({ error: 'WORKER_API_BASE / WEB_AUTH_SECRET not configured on Pages worker.' }),
+      JSON.stringify({
+        error: `Pages worker misconfigured: missing ${missing}. ` +
+          `Run \`cd pages && npx wrangler secret put ${missing.split(', ')[0]}\` and redeploy.`,
+      }),
       { status: 503, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } },
     );
   }

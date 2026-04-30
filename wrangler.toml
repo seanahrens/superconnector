@@ -12,7 +12,7 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "superconnector"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "3b2daa13-4e73-4fdf-b5a9-60fd66f81268"
 migrations_dir = "migrations"
 
 # Cloudflare Vectorize for semantic person search.

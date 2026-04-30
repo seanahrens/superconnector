@@ -94,10 +94,26 @@ app.post('/api/admin/clear-queue', requireAuth, async (c) => {
 });
 
 // Admin: reset the Granola high-water mark so the next ingest re-pulls notes.
-// Existing meetings are kept; isAlreadyIngested skips duplicates by source_ref.
+// Existing meetings are kept; getExistingMeeting() skips them by source_ref
+// unless the note's content hash has changed (which then triggers reprocess).
 app.post('/api/admin/reset-ingest', requireAuth, async (c) => {
   await c.env.DB.prepare(`DELETE FROM ingest_state WHERE source = 'granola'`).run();
   return c.json({ ok: true });
+});
+
+// Admin: force a Granola sweep starting at `since` (ISO 8601). Use this after
+// editing a batch of note titles in Granola — it ignores the high-water mark
+// for one run, so every note >= since is checked for content changes and
+// reprocessed in place. Cheaper than nuking the high-water mark.
+app.post('/api/admin/repull-granola', requireAuth, async (c) => {
+  const url = new URL(c.req.url);
+  const since = url.searchParams.get('since') ?? '1970-01-01T00:00:00Z';
+  try {
+    const result = await runIngest(c.env, { forceSince: since });
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
 });
 
 // Diagnostic: test Granola API connectivity and show raw response shape.

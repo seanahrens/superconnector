@@ -14,7 +14,17 @@ function headers(json = true): HeadersInit {
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(`API ${resp.status}: ${text}`);
+    // Try to surface a structured server message; fall back to raw text.
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.error === 'string') detail = parsed.error;
+    } catch {
+      /* not JSON */
+    }
+    const err = new Error(`API ${resp.status}: ${detail}`);
+    console.error(err);
+    throw err;
   }
   return (await resp.json()) as T;
 }

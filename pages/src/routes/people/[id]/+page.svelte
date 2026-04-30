@@ -10,6 +10,7 @@
   let items = $state<PersonListItem[]>([]);
   let allTags = $state<TagRow[]>([]);
   let loadingList = $state(true);
+  let loadError = $state<string | null>(null);
 
   $effect(() => {
     const id = $page.params.id;
@@ -20,17 +21,31 @@
 
   async function loadProfile(id: string) {
     view = null;
-    view = await api.get<PersonView>(`/api/people/${id}`);
+    loadError = null;
+    try {
+      view = await api.get<PersonView>(`/api/people/${id}`);
+    } catch (err) {
+      loadError = (err as Error).message;
+    }
   }
   async function loadList() {
     loadingList = true;
-    const { items: data } = await api.get<{ items: PersonListItem[] }>(`/api/people?sort=magical&limit=200`);
-    items = data;
-    loadingList = false;
+    try {
+      const { items: data } = await api.get<{ items: PersonListItem[] }>(`/api/people?sort=magical&limit=200`);
+      items = data;
+    } catch (err) {
+      loadError = loadError ?? (err as Error).message;
+    } finally {
+      loadingList = false;
+    }
   }
   async function loadTags() {
-    const { tags } = await api.get<{ tags: TagRow[] }>(`/api/tags`);
-    allTags = tags;
+    try {
+      const { tags } = await api.get<{ tags: TagRow[] }>(`/api/tags`);
+      allTags = tags;
+    } catch {
+      /* tags are optional */
+    }
   }
 
   async function refreshAll() {
@@ -51,7 +66,13 @@
     />
   </aside>
   <section class="content">
-    {#if view}
+    {#if loadError}
+      <div class="error">
+        <strong>Failed to load.</strong>
+        <p>{loadError}</p>
+        <p class="muted small">Check the Pages worker secrets (<code>WEB_AUTH_SECRET</code>, <code>WORKER_API_BASE</code>) and the worker logs (<code>npx wrangler tail superconnector-pages</code>).</p>
+      </div>
+    {:else if view}
       <PersonProfile {view} {allTags} onChanged={refreshAll} />
     {:else}
       <div class="muted">Loading…</div>
@@ -78,5 +99,18 @@
     padding: 24px;
     display: flex;
     flex-direction: column;
+  }
+  .error {
+    background: #fff4f4;
+    border: 1px solid #f0c0c0;
+    border-radius: 8px;
+    padding: 16px;
+    color: #7a1e1e;
+    max-width: 720px;
+  }
+  .error code {
+    background: rgba(0,0,0,0.04);
+    padding: 0 4px;
+    border-radius: 3px;
   }
 </style>

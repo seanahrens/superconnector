@@ -16,10 +16,16 @@ export interface ApplyOptions {
   personId: string;
   meetingId: string;
   result: ExtractionResult;
+  // True when re-applying extraction for a Granola note whose content
+  // changed since it was first ingested. We then skip bumping meeting_count
+  // and last_met_date (the meeting is the same), and we wipe prior signals
+  // for this meeting so they don't pile up alongside the new ones. Followups
+  // are intentionally kept (the user may have interacted with them).
+  reprocess?: boolean;
 }
 
 export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promise<void> {
-  const { personId, meetingId, result } = opts;
+  const { personId, meetingId, result, reprocess } = opts;
   const now = nowIso();
 
   const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(personId).first<PersonRow>();
@@ -28,14 +34,23 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
   const updates = result.person_updates;
   const lowConfidence = result.extraction_confidence < HIGH_CONFIDENCE;
 
-  // Always update last_met_date and bump meeting_count, even when confidence is low.
-  await env.DB.prepare(
-    `UPDATE people
-     SET last_met_date = ?1,
-         meeting_count = meeting_count + 1,
-         updated_at = ?2
-     WHERE id = ?3`,
-  ).bind(now.slice(0, 10), now, personId).run();
+  if (reprocess) {
+    await env.DB.prepare(
+      `DELETE FROM signals WHERE meeting_id = ?1`,
+    ).bind(meetingId).run();
+    await env.DB.prepare(
+      `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
+    ).bind(now, personId).run();
+  } else {
+    // First ingest of this meeting — count it.
+    await env.DB.prepare(
+      `UPDATE people
+       SET last_met_date = ?1,
+           meeting_count = meeting_count + 1,
+           updated_at = ?2
+       WHERE id = ?3`,
+    ).bind(now.slice(0, 10), now, personId).run();
+  }
 
   // Direct writes for high-confidence cases.
   if (!lowConfidence) {

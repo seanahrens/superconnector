@@ -8,6 +8,7 @@ import {
   type GranolaAttendee,
   transcriptToString,
   isSoloNote,
+  noteContentHash,
 } from '../lib/granola';
 import { fetchIcs, eventsAround, type IcsEvent } from '../lib/ics';
 import { classifyMeeting, bestEventForNote } from '../lib/classify';
@@ -18,29 +19,69 @@ import { ulid, nowIso } from '../lib/ulid';
 
 const SOURCE = 'granola';
 
-export async function runIngest(env: Env): Promise<{ processed: number; skipped: number }> {
-  const since = await getHighWaterMark(env);
+export interface IngestOptions {
+  // When set, ignore the high-water mark and pull every note created after
+  // this ISO timestamp. Used by /api/admin/repull-granola to force a sweep
+  // for note-edit reprocessing.
+  forceSince?: string | null;
+}
+
+export async function runIngest(
+  env: Env,
+  opts: IngestOptions = {},
+): Promise<{ processed: number; reprocessed: number; skipped: number }> {
+  const since = opts.forceSince ?? (await getHighWaterMark(env));
   const granola = new GranolaClient(env.GRANOLA_API_KEY);
   const notes = await granola.listNotes({ created_after: since ?? undefined, limit: 50 });
 
   let icsEvents: IcsEvent[] | null = null;
   let lastRef = since;
   let processed = 0;
+  let reprocessed = 0;
   let skipped = 0;
 
   for (const note of notes) {
-    if (await isAlreadyIngested(env, note.id)) {
+    const existing = await getExistingMeeting(env, note.id);
+
+    // Cheap pre-filter: if Granola tells us the note hasn't been edited since
+    // we last saw it, skip without fetching the detail (saves a request and
+    // an LLM call).
+    if (
+      existing &&
+      note.updated_at &&
+      existing.source_updated_at &&
+      note.updated_at <= existing.source_updated_at
+    ) {
       skipped++;
       if (!lastRef || note.created_at > lastRef) lastRef = note.created_at;
       continue;
     }
+
     if (!icsEvents) {
       icsEvents = env.PROTON_ICS_URL ? await fetchIcs(env.PROTON_ICS_URL).catch(() => []) : [];
     }
     try {
       const fullNote = await granola.getNote(note.id);
-      const result = await processNote(env, fullNote, icsEvents);
+      const hash = await noteContentHash(fullNote);
+
+      if (existing && existing.source_content_hash === hash) {
+        // Content unchanged — just refresh the updated_at marker so the cheap
+        // pre-filter catches it next time.
+        if (fullNote.updated_at) {
+          await env.DB.prepare(
+            `UPDATE meetings SET source_updated_at = ?1 WHERE id = ?2`,
+          ).bind(fullNote.updated_at, existing.id).run();
+        }
+        skipped++;
+        if (!lastRef || note.created_at > lastRef) lastRef = note.created_at;
+        continue;
+      }
+
+      const result = existing
+        ? await reprocessNote(env, fullNote, icsEvents, existing, hash)
+        : await processNote(env, fullNote, icsEvents, hash);
       if (result === 'processed') processed++;
+      else if (result === 'reprocessed') reprocessed++;
       else skipped++;
     } catch (err) {
       console.error('ingest error', { noteId: note.id, err: (err as Error).message });
@@ -48,16 +89,19 @@ export async function runIngest(env: Env): Promise<{ processed: number; skipped:
     if (!lastRef || note.created_at > lastRef) lastRef = note.created_at;
   }
 
-  if (lastRef && lastRef !== since) await setHighWaterMark(env, lastRef);
-  return { processed, skipped };
+  if (lastRef && lastRef !== since && !opts.forceSince) {
+    await setHighWaterMark(env, lastRef);
+  }
+  return { processed, reprocessed, skipped };
 }
 
-type ProcessOutcome = 'processed' | 'skipped';
+type ProcessOutcome = 'processed' | 'reprocessed' | 'skipped';
 
 async function processNote(
   env: Env,
   note: GranolaNote,
   icsEventsAll: IcsEvent[],
+  contentHash: string,
 ): Promise<ProcessOutcome> {
   // Solo notes (personal brainstorming, no other attendees, no calendar event)
   // shouldn't enter the people graph at all — skip silently.
@@ -187,8 +231,9 @@ async function processNote(
     `INSERT INTO meetings (
        id, person_id, source, source_ref, recorded_at, meeting_context,
        calendar_match_confidence, event_title, event_start, event_end,
-       attendees_at_match, transcript, summary, classification, created_at
-     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)`,
+       attendees_at_match, transcript, summary, classification, created_at,
+       source_content_hash, source_updated_at
+     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
   ).bind(
     meetingId,
     resolved.personId,
@@ -205,6 +250,8 @@ async function processNote(
     note.summary,
     cls.classification,
     now,
+    contentHash,
+    note.updated_at ?? null,
   ).run();
 
   // Extract and apply.
@@ -240,11 +287,175 @@ async function processNote(
   return 'processed';
 }
 
-async function isAlreadyIngested(env: Env, sourceRef: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    'SELECT id FROM meetings WHERE source = ?1 AND source_ref = ?2 LIMIT 1',
-  ).bind(SOURCE, sourceRef).first();
-  return !!row;
+interface ExistingMeeting {
+  id: string;
+  person_id: string;
+  classification: string;
+  source_content_hash: string | null;
+  source_updated_at: string | null;
+}
+
+async function getExistingMeeting(env: Env, sourceRef: string): Promise<ExistingMeeting | null> {
+  return await env.DB.prepare(
+    `SELECT id, person_id, classification, source_content_hash, source_updated_at
+     FROM meetings WHERE source = ?1 AND source_ref = ?2 LIMIT 1`,
+  ).bind(SOURCE, sourceRef).first<ExistingMeeting>();
+}
+
+// Re-apply a Granola note whose content has changed since the last ingest.
+// Refreshes the meeting row, then either re-extracts in place or queues a
+// `meeting_reclassification` item if the classification or counterpart has
+// changed (we don't silently re-route a meeting to a different person — that
+// would destroy provenance for any signals derived from it).
+async function reprocessNote(
+  env: Env,
+  note: GranolaNote,
+  icsEventsAll: IcsEvent[],
+  existing: ExistingMeeting,
+  contentHash: string,
+): Promise<ProcessOutcome> {
+  if (isSoloNote(note, env.EMAIL_TO ?? null)) return 'skipped';
+
+  const userEmail = (env.EMAIL_TO ?? '').toLowerCase();
+  const ownerEmail = (note.owner?.email ?? '').toLowerCase();
+  const granolaPeople: GranolaAttendee[] =
+    note.calendar_event?.attendees ?? note.attendees ?? [];
+
+  let attendees: Array<{ email: string | null; name: string | null }> = [];
+  let eventTitle: string | null = note.calendar_event?.summary ?? null;
+  let eventStart: string | null = note.calendar_event?.start_time ?? null;
+  let eventEnd: string | null = note.calendar_event?.end_time ?? null;
+
+  const granolaOthers = granolaPeople.filter(
+    (a) => a.email && a.email.toLowerCase() !== userEmail && a.email.toLowerCase() !== ownerEmail,
+  );
+
+  if (granolaOthers.length > 0) {
+    attendees = granolaOthers.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
+  } else {
+    const recordedAt = new Date(note.created_at);
+    const candidates = eventsAround(icsEventsAll, recordedAt, 15);
+    const match = bestEventForNote(candidates, note.title);
+    if (match.event) {
+      const others = (match.event.attendees ?? []).filter(
+        (a) => (a.email ?? '').toLowerCase() !== userEmail,
+      );
+      attendees = others.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
+      eventTitle = match.event.summary ?? eventTitle;
+      eventStart = match.event.start.toISOString();
+      eventEnd = match.event.end.toISOString();
+    }
+  }
+
+  const cls = await classifyMeeting(env, {
+    noteTitle: note.title,
+    noteSummary: note.summary,
+    eventTitle,
+    attendees,
+  });
+
+  // Detect a structural change. If classification flipped (e.g. ambiguous → 1:1
+  // after a title edit) or the counterpart resolves to a different person,
+  // surface this in the queue rather than silently re-routing.
+  const counterpart = attendees[0] ?? null;
+  let resolvedPersonId: string | null = null;
+  if (counterpart && (counterpart.email || counterpart.name)) {
+    const r = await resolvePerson(env, { email: counterpart.email, name: counterpart.name });
+    if (!r.ambiguous) resolvedPersonId = r.personId;
+  }
+
+  const classificationChanged = cls.classification !== existing.classification;
+  const personChanged = resolvedPersonId !== null && resolvedPersonId !== existing.person_id;
+
+  const transcriptStr = transcriptToString(note.transcript);
+
+  // Always refresh the stored content even if classification flipped; the
+  // queue item below explains the conflict.
+  await env.DB.prepare(
+    `UPDATE meetings
+     SET event_title = ?1, event_start = ?2, event_end = ?3,
+         attendees_at_match = ?4, transcript = ?5, summary = ?6,
+         classification = ?7, source_content_hash = ?8, source_updated_at = ?9
+     WHERE id = ?10`,
+  ).bind(
+    eventTitle,
+    eventStart,
+    eventEnd,
+    JSON.stringify(attendees),
+    transcriptStr,
+    note.summary,
+    cls.classification,
+    contentHash,
+    note.updated_at ?? null,
+    existing.id,
+  ).run();
+
+  if (classificationChanged || personChanged) {
+    await env.DB.prepare(
+      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
+       VALUES (?1, 'meeting_reclassification', ?2, 'pending', ?3)`,
+    ).bind(
+      ulid(),
+      JSON.stringify({
+        meeting_id: existing.id,
+        previous_classification: existing.classification,
+        previous_person_id: existing.person_id,
+        new_classification: cls.classification,
+        new_resolved_person_id: resolvedPersonId,
+        attendees,
+        note: {
+          id: note.id,
+          title: note.title,
+          web_url: note.web_url,
+          summary: note.summary,
+          transcript_preview: transcriptStr?.slice(0, 1500) ?? null,
+        },
+        classifier_reason: cls.reason,
+      }),
+      nowIso(),
+    ).run();
+    return 'reprocessed';
+  }
+
+  // Same classification + same person: re-run extraction and apply with the
+  // reprocess flag (resets per-meeting signals, doesn't bump meeting_count).
+  if (cls.classification !== '1:1') return 'reprocessed';
+
+  const existingPerson = await env.DB.prepare(
+    'SELECT display_name, context, needs, offers, roles, trajectory_tags FROM people WHERE id = ?1',
+  ).bind(existing.person_id).first<{
+    display_name: string | null;
+    context: string | null;
+    needs: string | null;
+    offers: string | null;
+    roles: string | null;
+    trajectory_tags: string | null;
+  }>();
+
+  const result = await extractFromMeeting(env, {
+    source: SOURCE,
+    noteTitle: note.title,
+    noteSummary: note.summary,
+    transcript: transcriptStr,
+    existingPerson: existingPerson
+      ? {
+          displayName: existingPerson.display_name,
+          context: existingPerson.context,
+          needs: existingPerson.needs,
+          offers: existingPerson.offers,
+          roles: parseJsonArray(existingPerson.roles),
+          trajectoryTags: parseJsonArray(existingPerson.trajectory_tags),
+        }
+      : undefined,
+  });
+
+  await applyExtractionResult(env, {
+    personId: existing.person_id,
+    meetingId: existing.id,
+    result,
+    reprocess: true,
+  });
+  return 'reprocessed';
 }
 
 async function getHighWaterMark(env: Env): Promise<string | null> {
