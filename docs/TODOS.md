@@ -1161,6 +1161,94 @@ the selection move so flipping feels good — but respect
 
 ---
 
+## S. Render assistant messages as markdown (with link prettifying)
+
+**Why.** The chat assistant produces text like:
+
+> Hale Guyer has been added to your CRM and linked to FAR Labs. You can
+> find their profile at `/people/01KQG455PS1TB4FH2WSS6AMAWR`.
+
+Right now `<ChatPane>` renders the assistant body as plain text inside a
+`<div class="text">` with `white-space: pre-wrap`. So the path is
+unclickable and the user sees a raw ULID. Two fixes:
+
+1. **System prompt update.** Tell the assistant to write links as
+   markdown with friendly anchor text — `[their profile](/people/<id>)`,
+   not the raw path. Add this guidance to `SYSTEM_BASE` in
+   `src/api/chat.ts`. Also instruct the model that, in `new-person`
+   scope, the UI auto-redirects to the new profile, so a link is
+   redundant — a one-line confirmation without a link is fine.
+
+2. **Markdown rendering in `<ChatPane>`.** Replace the plain `{m.text}`
+   with a parsed markdown render. Two paths:
+
+   a. **Lightweight inline parser** (preferred — no dep): a tiny
+      regex pipeline that handles **bold**, *italic*, `code`,
+      `[text](url)` links, and paragraph/line breaks. ~40 lines, no
+      package.
+   b. **`marked` or `markdown-it` from npm.** Slightly bigger bundle
+      but full coverage. Both are ESM-friendly with SvelteKit. Choose
+      this if we ever want lists, headings, blockquotes.
+
+   Either way: links from `mailto:` / `https?:` open in a new tab; same-
+   origin links (`/people/...`) navigate via SvelteKit (use a click
+   handler that calls `goto`). Sanitize: only allow `http`, `https`,
+   and `mailto` schemes; never inject `<script>`.
+
+**Touch points.**
+- `src/api/chat.ts` (`SYSTEM_BASE`): add markdown-link guidance and a
+  note about new-person redirect.
+- `pages/src/lib/components/ChatPane.svelte`: swap `{m.text}` for a
+  `<MarkdownView text={m.text} />` snippet.
+- `pages/src/lib/components/MarkdownView.svelte` (new): minimal
+  parser, sanitized output, internal-link interception.
+
+---
+
+## T. Dedupe queue inserts by Granola note id
+
+**Why.** The Dismissed tab now shows duplicates — e.g. "Brainstorm AI
+Opps" twice on Apr 24, "Blue Dot - TAIS Unit 6" twice, etc. They're not
+visual artifacts; there are actual duplicate `confirmation_queue` rows.
+
+**Cause.** `src/cron/ingest.ts` short-circuits via
+`getExistingMeeting(sourceRef)` which only checks the `meetings` table.
+A note that got *queued* (rather than processed into a meeting) leaves
+no meeting row, so the next ingest tick — particularly any time the
+high-water mark gets reset (manual repull, admin endpoint, etc.) —
+inserts a second queue row for the same note. Over the lifetime of the
+project this has clearly happened multiple times.
+
+**Fix.**
+
+1. **Pre-insert check** in both queue-paths (meeting_classification and
+   person_resolution): before inserting, run
+   `SELECT id FROM confirmation_queue WHERE kind = ?1 AND
+   json_extract(payload, '$.note.id') = ?2 AND status = 'pending'
+   LIMIT 1`. If a pending row already exists, update its `created_at`
+   instead of inserting a fresh one. (Or, at minimum, no-op.)
+2. **One-time cleanup migration** (`migrations/0007_dedupe_queue.sql`)
+   that deletes duplicate dismissed/pending rows for the same
+   `(kind, json_extract(payload, '$.note.id'))`, keeping the most
+   recent. Run as a `DELETE FROM confirmation_queue WHERE id IN
+   (SELECT id FROM confirmation_queue WHERE rowid NOT IN (...))` —
+   simple keep-newest pattern.
+3. **(Defense in depth)** Add a partial unique index:
+   `CREATE UNIQUE INDEX uniq_queue_pending_note ON
+   confirmation_queue(kind, json_extract(payload, '$.note.id'))
+   WHERE status = 'pending';`. Prevents future regressions even if
+   the application code forgets the check.
+
+**Touch points.**
+- `migrations/0007_dedupe_queue.sql` — cleanup + unique index.
+- `src/cron/ingest.ts` — pre-insert check at both queue-insertion
+  sites (meeting_classification and the two person_resolution
+  branches).
+- `src/lib/queue_resolve.ts` — also check before any queue inserts
+  there (if any).
+
+---
+
 ## G. Ingest disposition log
 
 To answer "do you have all the notes" the system needs an `ingest_log`
