@@ -22,7 +22,7 @@
 
   const navItems = [
     { href: '/people', label: 'People' },
-    { href: '/queue', label: 'Queue' },
+    { href: '/notes', label: 'Notes' },
     { href: '/tags', label: 'Tags' },
     { href: '/followups', label: 'Followups' },
   ];
