@@ -1624,6 +1624,145 @@ change.
 
 ---
 
+## AI. Name disambiguation + duplicate-prevention queue
+
+Today, person creation goes through `resolvePerson` (`src/lib/resolve.ts`)
+which:
+- exact-matches on email,
+- exact-matches on `display_name` (case-insensitive),
+- LIKE-matches on first/last token if no exact hits,
+- creates a new row otherwise.
+
+Two failure modes:
+
+1. The user adds "Tom McLeod" via the modal and there's already a "Tom"
+   in the DB (different last name) — current resolver creates a new row;
+   if it's *actually* the same Tom, we now have a dupe.
+2. Granola ingest creates "Sarah Chen" from a calendar attendee email,
+   and a chat dictation later mentions "Sarah" without an email — the
+   LIKE match might collide with someone else named Sarah, or might miss
+   the existing row if the dictation said only "Sarah" without context.
+
+**Goal.** Whenever person creation or update is about to happen, run a
+match pass that surfaces *any plausible candidate*, including first-name
+matches. If one or more candidates exist, **don't silently create or
+silently merge** — enqueue a `person_disambiguation` confirmation_queue
+item asking the user to either pick an existing person, confirm a new
+one, or merge.
+
+**Design sketch.**
+
+1. New helper `findDisambiguationCandidates(env, {name?, email?})` in
+   `src/lib/resolve.ts` (next to `fuzzyByName`). Returns:
+   - exact email matches (highest signal),
+   - exact display_name matches (high),
+   - first-token matches (lower signal — "Tom" → every Tom),
+   - last-token matches,
+   - aliases JSON column matches.
+   Each candidate carries a `match_kind` and a numeric score so the UI can
+   render reasons ("matches first name", "shares email domain", etc.).
+2. Update `resolvePerson` callers:
+   - **Granola ingest** (`src/cron/ingest.ts`): when an email is present
+     and matches exactly, proceed (high confidence). When name-only
+     matching surfaces ≥1 candidate, enqueue a `person_disambiguation`
+     item with `{candidates, proposed_attrs}` rather than auto-create.
+   - **`add_person` tool** (`src/tools/people_mut.ts`): same — if any
+     candidate exists, queue instead of insert. Return
+     `{queued: true, queue_id}` to the caller.
+   - **`dictate` tool**: same.
+3. New queue kind `person_disambiguation` with payload:
+   ```ts
+   {
+     proposed: { name?, email?, initial_context?, ... },
+     candidates: Array<{
+       person_id, display_name, primary_email,
+       match_kind: 'email' | 'display_name' | 'first_token' | 'last_token' | 'alias',
+       score: number,
+       last_met_date, meeting_count
+     }>,
+     source: 'add_person' | 'dictate' | 'granola',
+     source_ref: string | null
+   }
+   ```
+4. Resolution actions in `src/api/queue.ts`:
+   - `decision: 'use_existing'` + `selected_person_id` — apply `proposed`
+     attrs to that row (via `update_person`), discard the new candidate.
+   - `decision: 'create_new'` — proceed with the original create.
+   - `decision: 'merge'` + `keep_id` + `merge_id` — handles the post-hoc
+     dupe case where two rows already exist (use `mergePeople`).
+5. UI: extend the queue page (`pages/src/routes/queue/+page.svelte`) with
+   a `person_disambiguation` renderer. Show proposed attrs vs each
+   candidate side-by-side with action buttons.
+6. Also keep the existing rank-based "Merge with…" affordance on the
+   profile (TODO X already shipped) so the user can clean up duplicates
+   they create deliberately.
+
+**Edge cases / gotchas.**
+- `add_person` from the modal currently does its work via the new-person
+  chat stream. The modal's "Adding…" state needs to handle the
+  "queued for disambiguation" reply gracefully — show a toast linking to
+  the queue rather than navigating to a non-existent person.
+- Granola ingest is async; queueing here is fine (no user blocking).
+- First-token-only matches will be noisy. Make them dismissible with
+  one click; don't pile up "Sarah" disambiguations every time a
+  different Sarah appears. Consider a `dont_disambiguate` per-pair
+  preference: once the user picks "create new" for proposed=Sarah
+  Chen vs candidate=Sarah Lee, remember the (Sarah Chen) email/name
+  combo and skip the prompt next time.
+- Privacy: don't surface raw transcripts in the queue payload — names,
+  emails, and one-line summaries only. The transcript stays on the
+  meeting row.
+
+---
+
+## AJ. LLM voice: address the user as "you", not "User"
+
+Across every LLM-touching surface (extraction prompts, chat system
+prompts, plays, draft-intro, daily email rendering), when content is
+*about* the user (the Me person, identified by `EMAIL_TO`), it should be
+written in the second person ("You met Sarah at …", "You're raising
+seed") — not third-person ("User met Sarah", "The user's organization").
+The user is the only reader, so second-person is correct.
+
+**Why this matters.**
+The chat replies, daily-email briefs, and signal bodies currently leak
+"User" / "the user" / third-person voice in places. It reads
+clinical and out-of-character for a personal assistant.
+
+**Where to fix.**
+
+- **`src/lib/extract.ts` (`EXTRACT_GUIDE`)** — for `user_updates` /
+  `user_signals`, instruct the model to write context_delta and signal
+  bodies in the second person ("You said you're leaving FAR Labs",
+  not "User said the user is leaving FAR Labs"). The counterpart's
+  fields stay third-person ("Sarah is exploring founding").
+- **`src/api/chat.ts`** — system prompt should bind a `me` block
+  describing the Me person and explicitly instruct: "When the user
+  refers to themselves or to 'me', it means {me.display_name}. Refer
+  to them as 'you' when writing about them; refer to other people in
+  the third person."
+- **`src/plays/brief.ts`** — briefing template renders to the user; any
+  reference to the user themselves should be "you".
+- **`src/plays/ways_to_help.ts`** — same.
+- **`src/cron/daily_email.ts`** — already addresses the user
+  conversationally ("Today — 2026-04-30"); audit for any "the user"
+  slips and replace.
+- **`src/tools/draft_intro.ts`** — drafts go *from* the user, so when
+  signing or referencing the sender, it's second-person.
+
+**Implementation note.** Rather than peppering second-person rules
+across every prompt, define one shared system block in
+`src/lib/anthropic.ts` (something like `aboutTheUserBlock(me)`) that
+describes the Me person and the voice rules, and prepend it as a
+cached system block on every Claude call. Anthropic's prompt-caching
+will share it across calls so the cost is amortized.
+
+**Verification.** Trigger `POST /api/run/daily-email` and a few chat
+queries after deploy and grep the rendered output for "user". Should be
+zero matches in user-facing surfaces (it's fine in code/logs).
+
+---
+
 ## Done (recent)
 
 For context — these were resolved in the most recent agent session:
