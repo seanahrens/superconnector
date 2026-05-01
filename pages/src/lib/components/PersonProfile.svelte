@@ -22,6 +22,43 @@
   let editValue = $state('');
   let newTagName = $state('');
   let mergeOpen = $state(false);
+  // Edit-mode for the header card. When false, empty fields are hidden so
+  // sparse profiles aren't cluttered with placeholders. Toggling on shows
+  // every field (with its EditableField input visible) so the user can fill
+  // them in.
+  let editingHeader = $state(false);
+  function hasVal(s: string | null | undefined): boolean {
+    return !!(s && s.trim());
+  }
+
+  // Auxiliary actions dropdown (merge / delete). Click-outside via document
+  // listener so we don't need a portal.
+  let auxOpen = $state(false);
+  let auxAnchor: HTMLElement | undefined = $state();
+  $effect(() => {
+    if (!auxOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!auxAnchor) return;
+      if (!auxAnchor.contains(e.target as Node)) auxOpen = false;
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  });
+
+  async function deletePerson() {
+    auxOpen = false;
+    const name = view.person.display_name?.trim() || view.person.primary_email?.trim() || '(unnamed)';
+    const confirmation = prompt(
+      `Delete "${name}"? This removes the person, their tags, signals, followups, and chat history. Meetings are kept but orphaned. Type the name to confirm:`,
+    );
+    if (confirmation == null) return;
+    if (confirmation.trim() !== name.trim()) {
+      alert('Name did not match. Aborted.');
+      return;
+    }
+    await api.delete(`/api/people/${view.person.id}`);
+    await goto('/people');
+  }
 
   async function onMerged() {
     mergeOpen = false;
@@ -209,81 +246,121 @@
           />
         </h1>
         <span class="spacer"></span>
-        <button class="btn small ghost" onclick={() => (mergeOpen = true)} title="Merge a duplicate into this person">
-          <Icon name="merge" size={14} /> Merge with…
+        <button
+          class="btn small ghost icon-only"
+          onclick={() => (editingHeader = !editingHeader)}
+          aria-pressed={editingHeader}
+          title={editingHeader ? 'Done editing' : 'Edit profile fields'}
+        >
+          <Icon name={editingHeader ? 'check' : 'pencil'} size={14} />
         </button>
+        <div class="aux-wrap" bind:this={auxAnchor}>
+          <button
+            class="btn small ghost icon-only"
+            onclick={() => (auxOpen = !auxOpen)}
+            aria-haspopup="menu"
+            aria-expanded={auxOpen}
+            title="More actions"
+          >
+            <Icon name="more-horizontal" size={14} />
+          </button>
+          {#if auxOpen}
+            <div class="aux-menu" role="menu">
+              <button class="aux-item" role="menuitem" onclick={() => { auxOpen = false; mergeOpen = true; }}>
+                <Icon name="merge" size={14} /> Merge with…
+              </button>
+              <button class="aux-item danger" role="menuitem" onclick={deletePerson}>
+                <Icon name="trash" size={14} /> Delete person
+              </button>
+            </div>
+          {/if}
+        </div>
       </div>
       <div class="hero-meta muted small">
-        <span class="meta-cell">
-          <Icon name="mail" size={14} />
-          <EditableField
-            value={view.person.primary_email}
-            placeholder="add email"
-            label="Edit email"
-            type="email"
-            onSave={async (next) => {
-              await api.patch(`/api/people/${view.person.id}`, { email: next });
-              await onChanged();
-            }}
-          />
-        </span>
-        <span class="meta-cell">
-          <Icon name="phone" size={14} />
-          <EditableField
-            value={view.person.phone}
-            placeholder="add phone"
-            label="Edit phone"
-            type="tel"
-            onSave={async (next) => {
-              await api.patch(`/api/people/${view.person.id}`, { phone: next });
-              await onChanged();
-            }}
-          />
-        </span>
-        <span class="meta-cell">
-          <Icon name="home" size={14} />
-          <EditableField
-            value={view.person.home_location}
-            placeholder="add home"
-            label="Edit home location"
-            onSave={async (next) => {
-              await api.patch(`/api/people/${view.person.id}`, { home_location: next });
-              await onChanged();
-            }}
-          />
-        </span>
-        <span class="meta-cell">
-          <Icon name="briefcase" size={14} />
-          <EditableField
-            value={view.person.work_org}
-            placeholder="add org"
-            label="Edit work org"
-            onSave={async (next) => {
-              await api.patch(`/api/people/${view.person.id}`, { work_org: next });
-              await onChanged();
-            }}
-          />
-          {#if view.person.work_org || view.person.work_location}
-            <span class="muted">·</span>
-          {/if}
-          <EditableField
-            value={view.person.work_location}
-            placeholder="add work location"
-            label="Edit work location"
-            onSave={async (next) => {
-              await api.patch(`/api/people/${view.person.id}`, { work_location: next });
-              await onChanged();
-            }}
-          />
-        </span>
-        <span class="meta-cell">
-          <Icon name="calendar" size={14} />
-          last met {fmtShortDate(view.person.last_met_date)}
-        </span>
-        <span class="meta-cell">
-          <Icon name="users" size={14} />
-          {view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}
-        </span>
+        {#if editingHeader || hasVal(view.person.primary_email)}
+          <span class="meta-cell">
+            <Icon name="mail" size={14} />
+            <EditableField
+              value={view.person.primary_email}
+              placeholder="add email"
+              label="Edit email"
+              type="email"
+              onSave={async (next) => {
+                await api.patch(`/api/people/${view.person.id}`, { email: next });
+                await onChanged();
+              }}
+            />
+          </span>
+        {/if}
+        {#if editingHeader || hasVal(view.person.phone)}
+          <span class="meta-cell">
+            <Icon name="phone" size={14} />
+            <EditableField
+              value={view.person.phone}
+              placeholder="add phone"
+              label="Edit phone"
+              type="tel"
+              onSave={async (next) => {
+                await api.patch(`/api/people/${view.person.id}`, { phone: next });
+                await onChanged();
+              }}
+            />
+          </span>
+        {/if}
+        {#if editingHeader || hasVal(view.person.home_location)}
+          <span class="meta-cell">
+            <Icon name="home" size={14} />
+            <EditableField
+              value={view.person.home_location}
+              placeholder="add home"
+              label="Edit home location"
+              onSave={async (next) => {
+                await api.patch(`/api/people/${view.person.id}`, { home_location: next });
+                await onChanged();
+              }}
+            />
+          </span>
+        {/if}
+        {#if editingHeader || hasVal(view.person.work_org)}
+          <span class="meta-cell">
+            <Icon name="briefcase" size={14} />
+            <EditableField
+              value={view.person.work_org}
+              placeholder="add org"
+              label="Edit work org"
+              onSave={async (next) => {
+                await api.patch(`/api/people/${view.person.id}`, { work_org: next });
+                await onChanged();
+              }}
+            />
+          </span>
+        {/if}
+        {#if editingHeader || hasVal(view.person.work_location)}
+          <span class="meta-cell">
+            <Icon name="map-pin" size={14} />
+            <EditableField
+              value={view.person.work_location}
+              placeholder="add work location"
+              label="Edit work location"
+              onSave={async (next) => {
+                await api.patch(`/api/people/${view.person.id}`, { work_location: next });
+                await onChanged();
+              }}
+            />
+          </span>
+        {/if}
+        {#if hasVal(view.person.last_met_date)}
+          <span class="meta-cell">
+            <Icon name="calendar" size={14} />
+            last met {fmtShortDate(view.person.last_met_date)}
+          </span>
+        {/if}
+        {#if view.person.meeting_count > 0}
+          <span class="meta-cell">
+            <Icon name="users" size={14} />
+            {view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}
+          </span>
+        {/if}
       </div>
       <!-- One unified tag row: roles (filled), trajectory (outlined),
            free tags (white), with × removals and an inline add input.
@@ -989,6 +1066,39 @@
   .empty {
     padding: 8px 0;
   }
+
+  /* ──────────────────────────────────────────── aux dropdown */
+  .aux-wrap { position: relative; }
+  .aux-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 180px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+    padding: 4px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+  }
+  .aux-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .aux-item:hover { background: var(--hover); }
+  .aux-item.danger { color: #b91c1c; }
+  .aux-item.danger:hover { background: #fef2f2; }
 
   /* ──────────────────────────────────────────── chat */
   /* Sticky to the bottom of the right-pane viewport so the composer is

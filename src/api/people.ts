@@ -193,6 +193,33 @@ app.post('/:id/tags', async (c) => {
   return c.json(out);
 });
 
+// Hard-delete a person and every dependent row. No undo (use D1 Time Travel
+// or the monthly R2 backup if you need to recover). Single-user — no auth
+// scoping beyond requireAuth.
+app.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM person_tags WHERE person_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM signals WHERE person_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM followups WHERE person_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE person_id = ?1)').bind(id),
+    c.env.DB.prepare('DELETE FROM chat_threads WHERE person_id = ?1').bind(id),
+    // Meetings are kept-but-orphaned: the transcript may still be useful
+    // historical record. Set person_id NULL so they don't anchor a deleted
+    // person in queries.
+    c.env.DB.prepare('UPDATE meetings SET person_id = NULL WHERE person_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM people WHERE id = ?1').bind(id),
+  ]);
+  // Best-effort vector cleanup. Failures are non-fatal — the index will go
+  // stale but a re-embed of any new person will reuse the slot.
+  try {
+    await c.env.VECTORS.deleteByIds([id]);
+  } catch (err) {
+    console.warn('vector delete failed', { id, err: (err as Error).message });
+  }
+  return c.json({ ok: true });
+});
+
 app.delete('/:id/tags/:tag_name', async (c) => {
   const id = c.req.param('id');
   const tagName = decodeURIComponent(c.req.param('tag_name'));

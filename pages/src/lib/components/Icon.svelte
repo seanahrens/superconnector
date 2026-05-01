@@ -30,7 +30,9 @@
       | 'phone'
       | 'home'
       | 'briefcase'
-      | 'calendar';
+      | 'calendar'
+      | 'map-pin'
+      | 'more-horizontal';
     size?: number;
     strokeWidth?: number;
     'aria-hidden'?: boolean | 'true' | 'false';
@@ -152,5 +154,12 @@
     <line x1="16" y1="2" x2="16" y2="6" />
     <line x1="8" y1="2" x2="8" y2="6" />
     <line x1="3" y1="10" x2="21" y2="10" />
+  {:else if name === 'map-pin'}
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+    <circle cx="12" cy="10" r="3" />
+  {:else if name === 'more-horizontal'}
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+    <circle cx="5" cy="12" r="1" />
   {/if}
 </svg>
