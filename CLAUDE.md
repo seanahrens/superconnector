@@ -133,7 +133,7 @@ the same means nothing was uploaded).
 
 Threat model: an AI agent (or the user) misunderstands a request and clobbers
 the database via a bad migration, mass mutation, or wrong delete. Not infra
-compromise. Three layers, each cheap, with overlapping coverage:
+compromise. Two layers, both on Cloudflare, both effectively free:
 
 1. **D1 Time Travel (last 30 days, in-place rollback).** Cloudflare keeps a
    continuous restore log automatically — free on Workers Paid. Restore to
@@ -144,49 +144,22 @@ compromise. Three layers, each cheap, with overlapping coverage:
    `scripts/deploy.sh` automatically logs the pre-deploy timestamp to
    `backups/restore-points.log` (gitignored, on the user's Mac) so the
    rollback target is exact, not a guess. Run `scripts/restore-point.sh
-   "<label>"` manually before any other risky operation.
+   "<label>"` manually before any other risky operation (admin endpoints,
+   schema migrations).
 
-2. **Worker-side weekly D1 → R2 dump (last 12 weeks, on Cloudflare).**
+2. **Worker-side monthly D1 → R2 dump (last 24 months, on Cloudflare).**
    Implemented in `src/cron/backup.ts` (function `runBackup`) and bound to
-   the `BACKUPS` R2 bucket in `wrangler.toml`. Each run writes
-   `superconnector/backups/YYYY-MM-DD.sql` and prunes anything older than
-   the 12 most recent. Trigger manually via `POST /api/run/backup` with the
-   `WEB_AUTH_SECRET`. The corresponding cron schedule lives in `wrangler.toml`
-   `[triggers]` — verify it's set to a weekly cadence before relying on it.
-   Total cost: ~$0/mo (R2 free tier dwarfs our footprint).
+   the `BACKUPS` R2 bucket in `wrangler.toml`. Cron `0 9 1 * *` (1st of each
+   month, 09:00 UTC) writes `superconnector/backups/YYYY-MM-DD.sql` and
+   prunes anything older than the 24 most recent. Trigger manually any time
+   via `POST /api/run/backup` with the `WEB_AUTH_SECRET`. Total cost:
+   ~$0/mo (R2 free tier dwarfs our footprint).
 
-3. **Monthly local-Mac dump (off-Cloudflare insurance).** `scripts/backup.sh`
-   runs `wrangler d1 export --remote` and writes a gzipped SQL dump to
-   `backups/superconnector-YYYY-MM-DD.sql.gz` on the user's machine. Run
-   manually or schedule via macOS launchd (plist below). This is the only
-   layer that survives a Cloudflare account being lost or locked; keep it
-   even though that's a low-likelihood failure mode.
-
-   Restore from any dump (R2 or local):
+   Restore from any dump:
    ```
-   gunzip -c backups/superconnector-2026-04-01.sql.gz \
-     | npx wrangler d1 execute superconnector --remote --file=/dev/stdin
-   ```
-
-   Sample launchd plist
-   (`~/Library/LaunchAgents/com.superconnector.backup.plist`; edit the path
-   to your clone, then `launchctl load <plist>`):
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <plist version="1.0"><dict>
-     <key>Label</key><string>com.superconnector.backup</string>
-     <key>ProgramArguments</key>
-     <array>
-       <string>/bin/bash</string>
-       <string>-lc</string>
-       <string>cd /Users/seanahrens/superconnector && scripts/backup.sh</string>
-     </array>
-     <key>StartCalendarInterval</key>
-     <dict><key>Day</key><integer>1</integer>
-           <key>Hour</key><integer>9</integer></dict>
-     <key>StandardErrorPath</key>
-     <string>/Users/seanahrens/superconnector/backups/launchd.err</string>
-   </dict></plist>
+   npx wrangler r2 object get superconnector-backups \
+     superconnector/backups/2026-04-01.sql --file=/tmp/restore.sql
+   npx wrangler d1 execute superconnector --remote --file=/tmp/restore.sql
    ```
 
 **Which layer to use when:**
@@ -194,7 +167,6 @@ compromise. Three layers, each cheap, with overlapping coverage:
 - "An agent corrupted half the people rows last week" → Time Travel (1) if
   inside 30 days, else R2 dump (2).
 - "I want February's state in November" → R2 dump (2).
-- "Cloudflare account is gone" → local Mac dump (3).
 
 ## What still hurts and where to look
 

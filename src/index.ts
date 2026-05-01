@@ -54,7 +54,7 @@ app.post('/api/run/ingest', requireAuth, async (c) => {
   }
 });
 
-// Manual trigger for the weekly D1 → R2 backup.
+// Manual trigger for the monthly D1 → R2 backup.
 app.post('/api/run/backup', requireAuth, async (c) => {
   try {
     const result = await runBackup(c.env);
@@ -253,7 +253,7 @@ async function handleScheduled(event: ScheduledController, env: Env): Promise<vo
     await runDailyEmail(env);
     return;
   }
-  if (cron === '0 9 * * SUN') {
+  if (cron === '0 9 1 * *') {
     const result = await runBackup(env);
     console.log('backup', result);
     return;

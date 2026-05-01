@@ -1,4 +1,4 @@
-// Weekly SQL dump of D1 → R2. Defense-in-depth on top of D1's built-in
+// Monthly SQL dump of D1 → R2. Defense-in-depth on top of D1's built-in
 // 30-day Time Travel: if a bug or migration corrupts state and we don't
 // notice within 30 days, the R2 dumps still exist.
 //
@@ -8,7 +8,7 @@
 import type { Env } from '../../worker-configuration';
 
 const PREFIX = 'superconnector/backups';
-const RETENTION = 12; // keep the most recent 12 weekly dumps
+const RETENTION = 24; // keep the most recent 24 monthly dumps (~2 years)
 
 interface ColumnInfo {
   name: string;

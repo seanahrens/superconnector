@@ -32,7 +32,7 @@ binding = "AI"
 [[send_email]]
 name = "EMAIL"
 
-# R2 bucket for weekly D1 SQL dumps. Free tier covers our ~1MB/year.
+# R2 bucket for monthly D1 SQL dumps. Free tier covers our ~1MB/year.
 [[r2_buckets]]
 binding = "BACKUPS"
 bucket_name = "superconnector-backups"
@@ -40,12 +40,12 @@ bucket_name = "superconnector-backups"
 # Cron triggers:
 #   */5 * * * *   ingest new Granola notes
 #   0 13 * * *    daily email at 06:00 America/Los_Angeles (13:00 UTC)
-#   0 9  * * 0    weekly D1 backup → R2 (Sunday 09:00 UTC)
+#   0 9 1 * *     monthly D1 backup → R2 (1st of month, 09:00 UTC)
 #
 # If you ever migrate scheduling to /cron-hub, remove this block, redeploy,
 # and add equivalent entries to cron-hub/src/index.ts.
 [triggers]
-crons = ["*/5 * * * *", "0 13 * * *", "0 9 * * SUN"]
+crons = ["*/5 * * * *", "0 13 * * *", "0 9 1 * *"]
 
 # Observability
 [observability]
