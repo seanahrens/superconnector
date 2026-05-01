@@ -79,6 +79,36 @@
   const onSubroute = $derived($page.url.pathname !== '/people');
 
   let addOpen = $state(false);
+  let searchEl: HTMLInputElement | undefined = $state();
+
+  // Global keyboard shortcuts for the People section. Skipped while the
+  // user is typing in any input/textarea/contenteditable so they don't
+  // hijack normal typing.
+  function isTypingTarget(t: EventTarget | null): boolean {
+    if (!(t instanceof HTMLElement)) return false;
+    if (t.isContentEditable) return true;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+  function onKey(e: KeyboardEvent) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isTypingTarget(e.target)) return;
+    if (e.key === 'a' || e.key === 'A') {
+      e.preventDefault();
+      addOpen = true;
+    } else if (e.key === '/') {
+      e.preventDefault();
+      searchEl?.focus();
+      searchEl?.select();
+    } else if (e.key === 'c' || e.key === 'C') {
+      // Person-chat focus is handled by PersonProfile via this same event.
+      window.dispatchEvent(new CustomEvent('superconnector:focus-person-chat'));
+    }
+  }
+  $effect(() => {
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   let meId = $state<string | null>(null);
   $effect(() => { void loadMe(); });
@@ -106,6 +136,24 @@
       if (topId) goto(`/people/${topId}`, { replaceState: true });
     }
   });
+
+  // While the user is typing in search and the active person is no longer
+  // in the filtered set, auto-jump to the top result so the right pane
+  // tracks what they're searching for. Don't navigate when results are
+  // empty (leave them on whatever they were viewing). Also skip when
+  // there's no current subroute (the redirect above handles that case).
+  $effect(() => {
+    if (loading || items.length === 0) return;
+    if (!q || !q.trim()) return;
+    if ($page.url.pathname === '/people') return;
+    const inSet = activeId && items.some((p) => p.person_id === activeId);
+    if (!inSet) {
+      const topId = items[0]?.person_id;
+      if (topId && topId !== activeId) {
+        goto(`/people/${topId}`, { replaceState: true, keepFocus: true, noScroll: true });
+      }
+    }
+  });
 </script>
 
 <div class="layout" data-pane={onSubroute ? 'detail' : 'list'}>
@@ -116,8 +164,9 @@
       <input
         class="search-input"
         type="search"
-        placeholder="Search name, email, context…"
+        placeholder="Search name, email, context…  /"
         bind:value={q}
+        bind:this={searchEl}
       />
     </div>
 
@@ -223,9 +272,11 @@
         class="add-person-btn"
         onclick={() => (addOpen = true)}
         aria-label="Add a new person"
+        title="Add a new person (A)"
       >
         <Icon name="plus" size={14} />
         Add Person
+        <span class="kbd-inline">A</span>
       </button>
     </div>
   </aside>
@@ -392,6 +443,18 @@
     transition: background 120ms ease, border-color 120ms ease;
   }
   .add-person-btn:hover { background: var(--hover); border-color: var(--muted); }
+  .kbd-inline {
+    display: inline-block;
+    padding: 0 5px;
+    margin-left: 4px;
+    background: rgba(0, 0, 0, 0.06);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 10px;
+    line-height: 14px;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
 
   @media (max-width: 720px) {
     .layout { grid-template-columns: 1fr; }

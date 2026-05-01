@@ -27,6 +27,18 @@
     loadHistory();
   });
 
+  // Per-person ChatPane reacts to the global "focus the person chat"
+  // shortcut (`C` from the layout's keydown handler) by focusing its
+  // textarea. Master-chat is opened via ⌘K which already focuses there.
+  $effect(() => {
+    if (scope !== 'person') return;
+    function onFocusEvent() {
+      textareaEl?.focus();
+    }
+    window.addEventListener('superconnector:focus-person-chat', onFocusEvent);
+    return () => window.removeEventListener('superconnector:focus-person-chat', onFocusEvent);
+  });
+
   // Apply initialInput ONCE per distinct seed value. Without this guard the
   // effect re-fires every time the user clears the textarea (or send empties
   // it), re-populating the field and fighting the user. When autoSend is on,

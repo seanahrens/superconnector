@@ -991,7 +991,18 @@
   }
 
   /* ──────────────────────────────────────────── chat */
-  .chat-card { padding-bottom: 0; }
+  /* Sticky to the bottom of the right-pane viewport so the composer is
+     always reachable no matter where the user has scrolled in the profile.
+     The message history scrolls inside .chatbox; only the chat-card itself
+     is pinned. */
+  .chat-card {
+    padding-bottom: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    background: white;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.06);
+  }
   .chatbox {
     height: 360px;
     border-top: 1px solid var(--border);
