@@ -14,8 +14,22 @@
     onWrite?: (toolName: string) => void | Promise<void>;
     /** Fired when scope='new-person' and add_person resolves a new id. */
     onPersonCreated?: (id: string) => void;
+    /** Two-way bound; controls whether the message history panel is visible.
+        Default true preserves existing behaviour for callers that don't pass
+        it; per-person profile passes false initially so the composer is the
+        only thing visible until the user toggles. */
+    historyVisible?: boolean;
   }
-  let { scope, threadId, personId, initialInput, autoSend, onWrite, onPersonCreated }: Props = $props();
+  let {
+    scope,
+    threadId,
+    personId,
+    initialInput,
+    autoSend,
+    onWrite,
+    onPersonCreated,
+    historyVisible = $bindable(true),
+  }: Props = $props();
 
   let messages = $state<Array<{ role: 'user' | 'assistant'; text: string; toolCalls?: string[] }>>([]);
   let input = $state('');
@@ -146,27 +160,39 @@
   $effect(() => { void input; autosize(); });
 </script>
 
-<div class="pane">
-  <div class="msgs" bind:this={scroller}>
-    {#if messages.length === 0}
-      <p class="empty">No messages yet.</p>
-    {/if}
-    {#each messages as m}
-      <div class="msg" class:user={m.role === 'user'} class:assistant={m.role === 'assistant'}>
-        {#if m.toolCalls && m.toolCalls.length}
-          <div class="tools">
-            {#each m.toolCalls as t}<span class="tool">{t}</span>{/each}
-          </div>
-        {/if}
-        {#if m.role === 'assistant'}
-          <div class="text"><MarkdownView text={m.text} /></div>
-        {:else}
-          <div class="text">{m.text}</div>
-        {/if}
-      </div>
-    {/each}
-  </div>
+<div class="pane" class:history-hidden={!historyVisible}>
+  {#if historyVisible}
+    <div class="msgs" bind:this={scroller}>
+      {#if messages.length === 0}
+        <p class="empty">No messages yet.</p>
+      {/if}
+      {#each messages as m}
+        <div class="msg" class:user={m.role === 'user'} class:assistant={m.role === 'assistant'}>
+          {#if m.toolCalls && m.toolCalls.length}
+            <div class="tools">
+              {#each m.toolCalls as t}<span class="tool">{t}</span>{/each}
+            </div>
+          {/if}
+          {#if m.role === 'assistant'}
+            <div class="text"><MarkdownView text={m.text} /></div>
+          {:else}
+            <div class="text">{m.text}</div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
   <div class="composer">
+    <button
+      type="button"
+      class="toggle-history"
+      onclick={() => (historyVisible = !historyVisible)}
+      aria-label={historyVisible ? 'Collapse chat history' : 'Expand chat history'}
+      aria-pressed={historyVisible}
+      title={historyVisible ? 'Hide history' : 'Show history'}
+    >
+      <span class="caret" class:up={historyVisible}>▾</span>
+    </button>
     <textarea
       bind:value={input}
       bind:this={textareaEl}
@@ -230,9 +256,37 @@
     padding: 8px;
     border-top: 1px solid var(--border);
     background: white;
+    align-items: flex-end;
   }
+  .pane.history-hidden { grid-template-rows: auto; }
+  .pane.history-hidden .composer { border-top: 0; }
   .composer textarea {
     flex: 1;
     resize: none;
+  }
+  .toggle-history {
+    border: 1px solid var(--border);
+    background: white;
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--muted);
+    align-self: center;
+  }
+  .toggle-history:hover { background: var(--hover); }
+  .toggle-history .caret {
+    display: inline-block;
+    line-height: 1;
+    transition: transform 120ms ease;
+    /* Default position is collapsed; the caret points down to mean "expand". */
+    transform: rotate(0deg);
+  }
+  .toggle-history .caret.up {
+    /* Flip to point up when history is shown ("collapse"). */
+    transform: rotate(180deg);
   }
 </style>

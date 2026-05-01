@@ -67,6 +67,11 @@
 
   let chatThreadId = $state<string | null>(null);
   let lastLoadedPersonId = $state<string | null>(null);
+  // Chat history is collapsed by default — the composer is the focal
+  // affordance, the history is one click away. ChatPane manages the
+  // toggle button itself; we hold the bound state so the surrounding
+  // .chatbox can resize to fit.
+  let chatHistoryVisible = $state(false);
 
   $effect(() => {
     const pid = view.person.id;
@@ -669,12 +674,13 @@
         <Icon name="plus" size={12} /> new
       </button>
     </header>
-    <div class="chatbox">
+    <div class="chatbox" class:collapsed={!chatHistoryVisible}>
       {#if chatThreadId}
         <ChatPane
           scope="person"
           personId={view.person.id}
           threadId={chatThreadId}
+          bind:historyVisible={chatHistoryVisible}
           onWrite={() => onChanged()}
         />
       {:else}
@@ -1104,7 +1110,8 @@
   /* Sticky to the bottom of the right-pane viewport so the composer is
      always reachable no matter where the user has scrolled in the profile.
      The message history scrolls inside .chatbox; only the chat-card itself
-     is pinned. */
+     is pinned. Bottom is pulled flush via negative margins on the card,
+     so the composer sits at the very bottom edge of the viewport. */
   .chat-card {
     padding-bottom: 0;
     position: sticky;
@@ -1113,12 +1120,16 @@
     background: white;
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.06);
   }
+  /* When the history is shown, give it room to scroll. When collapsed,
+     the chatbox shrinks to whatever the composer needs. */
   .chatbox {
     height: 360px;
     border-top: 1px solid var(--border);
     margin: 0 -16px -16px;
     overflow: hidden;
+    transition: height 160ms ease;
   }
+  .chatbox.collapsed { height: auto; }
   /* Round only the bottom corners since the chatbox is flush with the card edge. */
   .chat-card .chatbox {
     border-bottom-left-radius: 12px;

@@ -81,27 +81,26 @@
   let addOpen = $state(false);
   let searchEl: HTMLInputElement | undefined = $state();
 
-  // Global keyboard shortcuts for the People section. Skipped while the
-  // user is typing in any input/textarea/contenteditable so they don't
-  // hijack normal typing.
-  function isTypingTarget(t: EventTarget | null): boolean {
-    if (!(t instanceof HTMLElement)) return false;
-    if (t.isContentEditable) return true;
-    const tag = t.tagName;
-    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-  }
+  // Global keyboard shortcuts for the People section. All shortcuts use
+  // Cmd/Ctrl+Shift+<letter> so they work even when an input/textarea is
+  // focused (bare-letter shortcuts would hijack normal typing).
+  //
+  //   ⌘⇧A → open Add Person modal
+  //   ⌘⇧F → focus the people-list search field
+  //   ⌘⇧C → focus the per-person chat composer
   function onKey(e: KeyboardEvent) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (isTypingTarget(e.target)) return;
-    if (e.key === 'a' || e.key === 'A') {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod || !e.shiftKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 'a') {
       e.preventDefault();
       addOpen = true;
-    } else if (e.key === '/') {
+    } else if (k === 'f') {
       e.preventDefault();
       searchEl?.focus();
       searchEl?.select();
-    } else if (e.key === 'c' || e.key === 'C') {
-      // Person-chat focus is handled by PersonProfile via this same event.
+    } else if (k === 'c') {
+      e.preventDefault();
       window.dispatchEvent(new CustomEvent('superconnector:focus-person-chat'));
     }
   }
@@ -109,6 +108,13 @@
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  // OS-aware kbd glyphs for the on-screen hints.
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+  const kbdMod = isMac ? '⌘' : 'Ctrl+';
+  const kbdShift = isMac ? '⇧' : 'Shift+';
+  const kbdAdd = `${kbdMod}${kbdShift}A`;
+  const kbdFind = `${kbdMod}${kbdShift}F`;
 
   let meId = $state<string | null>(null);
   $effect(() => { void loadMe(); });
@@ -164,10 +170,11 @@
       <input
         class="search-input"
         type="search"
-        placeholder="Search name, email, context…  /"
+        placeholder="Search name, email, context…"
         bind:value={q}
         bind:this={searchEl}
       />
+      <span class="search-kbd" aria-hidden="true">{kbdFind}</span>
     </div>
 
     <div class="sort-row">
@@ -271,12 +278,12 @@
       <button
         class="add-person-btn"
         onclick={() => (addOpen = true)}
-        aria-label="Add a new person"
-        title="Add a new person (A)"
+        aria-label="Add a new person ({kbdAdd})"
+        title="Add a new person ({kbdAdd})"
       >
         <Icon name="plus" size={14} />
         Add Person
-        <span class="kbd-inline">A</span>
+        <span class="kbd-inline">{kbdAdd}</span>
       </button>
     </div>
   </aside>
@@ -364,7 +371,30 @@
     pointer-events: none;
     display: inline-flex;
   }
-  .search-input { padding-left: 32px; flex: 1; }
+  .search-input {
+    padding-left: 32px;
+    padding-right: 56px; /* room for the kbd badge */
+    flex: 1;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  .search-input::placeholder { font-size: 13px; }
+  .search-kbd {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 14px;
+    padding: 0 6px;
+    background: rgba(0, 0, 0, 0.04);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .search-input:focus + .search-kbd { opacity: 0; }
 
   .sort-row { display: flex; gap: 8px; align-items: center; }
   .sort-menu { position: relative; }
