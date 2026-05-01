@@ -1297,6 +1297,149 @@ migration.
 
 ---
 
+## T. Bulk add-people via the new-person modal
+
+The current "add person" modal (`pages/src/lib/components/AddPersonModal.svelte`)
+takes one person at a time. Add a tab in the same modal — "Single" /
+"Bulk" — where the bulk tab is a textarea that accepts a freeform paste:
+either a list of names, or rows of `name | email | one-line context | tags`,
+or a Granola/calendar paste. Run it through Haiku to parse N people; for
+each, call the existing `add_person` tool (or batch into one new
+`add_people_bulk` tool that runs them in parallel).
+
+UX detail: show a parsed-preview list before committing so the user can
+de-select any rows the LLM mis-parsed. Skip-or-merge handling for emails
+that already exist in the DB (offer "merge" or "skip" per row).
+
+Touch points:
+- `pages/src/lib/components/AddPersonModal.svelte` — tab UI + textarea + preview.
+- `src/tools/people_mut.ts` — add `add_people_bulk` or call `add_person` in a loop.
+- LLM prompt: tiny — "extract a JSON array of `{name, email?, context?, tags?}`
+  from this paste; one object per person."
+
+---
+
+## U. Add-person submit is slow (~45s) and lacks loading state
+
+Reproduce: open the new-person modal, fill in a single person (e.g.
+"Tiffany Hopkins"), click submit. Observation: ~45 seconds before the
+modal closes, and during the submit the button still shows the
+default-pointer cursor instead of a spinner / `wait` cursor / disabled
+state. User has no signal that anything is happening.
+
+Two things to investigate, two things to fix:
+
+1. **Where the time is going.** `add_person` should be a single D1 INSERT
+   plus maybe an embed upsert. 45s suggests something is awaiting an LLM
+   call (extraction? tag normalization? avatar fetch?). Tail
+   `wrangler tail superconnector --format pretty` while submitting and
+   look for slow steps. Likely culprits: (a) `resolveAndCacheAvatar` doing
+   a synchronous HTTP fetch + image processing, (b) Workers AI embedding
+   call, (c) something in the chat-pane creation flow on success.
+
+2. **Fix the loading state.** In `AddPersonModal.svelte`, set a
+   `submitting = $state(false)` flag before the `await api.post(...)`
+   call, set it to true while awaiting, false in the finally. Apply
+   `disabled={submitting}` to the submit button and `cursor: wait` on the
+   modal. While we're at it, render a small inline spinner / "creating…"
+   text so the user knows it's working.
+
+Both items are independent — fix the UX feedback even if the underlying
+slowness ends up being an LLM call we can't trim.
+
+---
+
+## V. Tags created with underscores keep coming back
+
+**Repro:** chat-driven or extraction-driven tag creation produces names
+like `open_to_cofounding` instead of `open to cofounding`. Happens
+intermittently, probably correlated with the LLM being primed to emit
+underscores by the prompt.
+
+**Why it happens.** Two paths leak underscores past normalization:
+
+1. **The extraction prompt itself promotes underscores.** `src/lib/extract.ts`
+   has docstring examples like `"trajectory/exploring_founding"` and
+   `"open_to_cofounding"` in the schema description it sends to Haiku.
+   The model dutifully copies the style.
+
+2. **`trajectory_tags_add` and `roles_add` arrays bypass `normalizeTagName`.**
+   In `src/lib/people_writes.ts`, lines ~64, ~191, the arrays from
+   `updates.trajectory_tags_add` and `updates.roles_add` are merged
+   directly into the JSON column via `mergeArray()` without normalization.
+   `normalizeTagName` is only called for the `tag_proposals` insert path
+   (line ~136).
+
+**Fix in two places:**
+
+- Update `extract.ts`'s system prompt: change every example with an
+  underscore to use a space (and make a single sentence-level rule
+  "use spaces between words, never underscores; slashes are reserved for
+  namespacing, e.g. `trajectory/raising seed`").
+- In `people_writes.ts`, normalize every string flowing into trajectory
+  tag / role JSON arrays. Add a `normalizeTagArray(strs)` helper next to
+  `normalizeTagName` that maps + dedupes.
+
+**Cleanup of existing data.** A one-shot admin endpoint
+`POST /api/admin/normalize-tags` that:
+- Iterates `tags`, `tag_proposals`, and every person's `trajectory_tags`
+  + `roles` JSON arrays, applying `normalizeTagName`.
+- For tags that collapse to the same canonical name (e.g.
+  `open_to_cofounding` and `open to cofounding`), keep one row, repoint
+  `person_tags`, delete duplicates.
+- Idempotent.
+
+After deploying, run it once and the historical underscores are gone.
+With the extraction prompt fix in place, no new ones appear.
+
+---
+
+## W. Phantom `last_met_date` shows today instead of the real meeting date
+
+**Repro:** open the profile of a person who hasn't had a meeting today —
+e.g. Tiffany Hopkins. The header shows "last met 2026-04-30" (or whatever
+today is) even though the corresponding `meetings` row's `recorded_at` is
+months earlier. This recurs across many people; the dates cluster on
+whatever day each ingest tick happened to run.
+
+**Root cause.** `src/lib/people_writes.ts:57`:
+```ts
+).bind(now.slice(0, 10), now, personId).run();
+```
+`now` is `nowIso()` — the time at which `applyExtractionResult` runs, not
+the time of the actual meeting. So every newly-processed Granola note
+sets `last_met_date` to today, not to the note's `recorded_at`.
+
+**Fix.**
+
+1. Thread the meeting's actual recorded date into `applyExtractionResult`.
+   Caller (`src/cron/ingest.ts` and `src/lib/queue_resolve.ts`) already has
+   `note.created_at` / the meeting's `recorded_at`; pass it as
+   `meetingRecordedAt: string` on the args object.
+2. In the function body, use `meetingRecordedAt.slice(0, 10)` for
+   `last_met_date`, not `now.slice(0, 10)`.
+3. Don't blindly overwrite — `MAX(existing last_met_date, this meeting's
+   date)` so older meetings ingested later don't *back-date* the field
+   (the user's most-recent-meeting indicator should always reflect the
+   most recent actual meeting, not the most recently *ingested* one).
+   Equivalent SQL:
+   ```sql
+   SET last_met_date = COALESCE(
+     CASE WHEN last_met_date IS NULL OR ?1 > last_met_date THEN ?1 ELSE last_met_date END,
+     ?1
+   )
+   ```
+4. **Backfill admin endpoint.** `POST /api/admin/backfill-last-met` that
+   for every person sets `last_met_date = (SELECT MAX(recorded_at) FROM
+   meetings WHERE person_id = people.id)` and `meeting_count = (SELECT
+   COUNT(*) ...)`. One-shot cleanup of already-corrupt rows. Idempotent.
+
+This bug also taints any logic that relies on `last_met_date` (the
+"magical" sort, "stale-active" weekly digest section, follow-up nudges).
+Worth fixing before any of those features mature.
+
+---
+
 ## Done (recent)
 
 For context — these were resolved in the most recent agent session:
