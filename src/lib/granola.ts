@@ -144,6 +144,17 @@ export async function noteContentHash(note: GranolaNote): Promise<string> {
   return hex;
 }
 
+// Returns true when the note is bound to a calendar event whose start time
+// is in the future (Granola pre-creates notes for upcoming meetings; we
+// don't want to register a "past meeting" before it's happened).
+export function isFutureEventNote(note: GranolaNote): boolean {
+  const start = note.calendar_event?.start_time;
+  if (!start) return false;
+  const t = Date.parse(start);
+  if (Number.isNaN(t)) return false;
+  return t > Date.now();
+}
+
 // Returns true when the only attendee is the note owner (i.e. a solo note).
 export function isSoloNote(note: GranolaNote, userEmail: string | null): boolean {
   const ownerEmail = (note.owner?.email ?? '').toLowerCase();

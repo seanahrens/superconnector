@@ -8,6 +8,7 @@ import { ulid, nowIso } from '../lib/ulid';
 import { getClient, MODEL_SONNET, cached } from '../lib/anthropic';
 import { anthropicToolDefs, runTool, isWriteTool } from '../tools';
 import { loadPersonView, summarizePersonForPrompt } from '../lib/person_view';
+import { TAG_NAMING_RULES } from '../lib/tag_norm';
 import type Anthropic from '@anthropic-ai/sdk';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -92,9 +93,11 @@ app.post('/threads/:id/messages', async (c) => {
      VALUES (?1, ?2, 'user', ?3, NULL, ?4)`,
   ).bind(userMsgId, thread.id, body.content, now).run();
 
-  // Build system prompt.
+  // Build system prompt. TAG_NAMING_RULES is shared across all surfaces so
+  // tag/role/trajectory names are consistent (no underscores, etc.).
   const systemBlocks: Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }> = [
     cached(SYSTEM_BASE),
+    cached(TAG_NAMING_RULES),
   ];
   if (thread.scope === 'person' && thread.person_id) {
     const view = await loadPersonView(c.env, thread.person_id);

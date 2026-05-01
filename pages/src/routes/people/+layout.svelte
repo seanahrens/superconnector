@@ -5,29 +5,35 @@
   // a profile (or the add-person chat).
 
   import { api } from '$lib/api';
-  import type { PersonListItem, TagRow } from '$lib/types';
+  import type { PersonListItem } from '$lib/types';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import PeopleList from '$components/PeopleList.svelte';
   import Icon from '$components/Icon.svelte';
-  import SegmentedToggle from '$components/SegmentedToggle.svelte';
   import AddPersonModal from '$components/AddPersonModal.svelte';
   import { peopleRefresh } from '$lib/stores';
 
   let { children } = $props();
 
   let items = $state<PersonListItem[]>([]);
-  let allTags = $state<TagRow[]>([]);
   let loading = $state(true);
 
   type SortKey = 'magical' | 'recent' | 'frequent' | 'custom' | 'alpha';
-  let sort = $state<SortKey>('magical');
-  let tags = $state<string[]>([]);
-  let roles = $state<string[]>([]);
-  let tagMode = $state<'or' | 'and'>('or');
+
+  // Persist sort + role filters across refreshes (TODO AL). Search text and
+  // the filter-pane open/closed state are intentionally NOT persisted —
+  // those feel stale on a fresh load.
+  const PREFS_KEY = 'superconnector:people-list-prefs-v1';
+  type Prefs = { sort: SortKey; roles: string[] };
+  function loadPrefs(): Partial<Prefs> {
+    if (typeof localStorage === 'undefined') return {};
+    try { return JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}'); } catch { return {}; }
+  }
+  const saved = loadPrefs();
+  let sort = $state<SortKey>(saved.sort ?? 'magical');
+  let roles = $state<string[]>(Array.isArray(saved.roles) ? saved.roles : []);
   let q = $state('');
   let filtersOpen = $state(false);
-  let tagsExpanded = $state(false);
 
   const ROLE_OPTIONS = ['founder', 'funder', 'talent', 'advisor'];
   const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
@@ -40,20 +46,14 @@
 
   async function load() {
     loading = true;
-    const url = new URLSearchParams({ sort, tag_mode: tagMode });
-    if (tags.length) url.set('tags', tags.join(','));
+    const url = new URLSearchParams({ sort });
     if (roles.length) url.set('roles', roles.join(','));
     if (q) url.set('q', q);
     const { items: data } = await api.get<{ items: PersonListItem[] }>(`/api/people?${url}`);
     items = data;
     loading = false;
   }
-  async function loadTags() {
-    const { tags: t } = await api.get<{ tags: TagRow[] }>(`/api/tags`);
-    allTags = t;
-  }
-  $effect(() => { void [sort, tags, roles, tagMode, q]; load(); });
-  $effect(() => { loadTags(); });
+  $effect(() => { void [sort, roles, q]; load(); });
 
   // Refresh the list explicitly when downstream mutations bump the
   // peopleRefresh store (add person, merge, rename, delete, etc.).
@@ -61,14 +61,17 @@
   // when picking a profile.
   $effect(() => { void $peopleRefresh; void load(); });
 
-  function toggleTag(name: string) {
-    tags = tags.includes(name) ? tags.filter((t) => t !== name) : [...tags, name];
-  }
+  // Persist prefs on change.
+  $effect(() => {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ sort, roles }));
+    } catch { /* quota or private mode — skip silently */ }
+  });
+
   function toggleRole(name: string) {
     roles = roles.includes(name) ? roles.filter((r) => r !== name) : [...roles, name];
   }
-
-  const TAG_COLLAPSED_LIMIT = 12;
 
   // Active id for the list highlight is read from the URL params so /people/[id]
   // shows the active row in the sidebar without prop-drilling.
@@ -81,25 +84,24 @@
   let addOpen = $state(false);
   let searchEl: HTMLInputElement | undefined = $state();
 
-  // Global keyboard shortcuts for the People section. All shortcuts use
-  // Cmd/Ctrl+Shift+<letter> so they work even when an input/textarea is
-  // focused (bare-letter shortcuts would hijack normal typing).
-  //
-  //   ⌘⇧A → open Add Person modal
-  //   ⌘⇧F → focus the people-list search field
-  //   ⌘⇧C → focus the per-person chat composer
+  // Global keyboard shortcuts for the People section. Single-modifier
+  // (Cmd on macOS, Ctrl elsewhere) so they fire even from inputs.
+  // Letters chosen to avoid the most common browser conflicts:
+  //   ⌘E → open Add Person modal     (no browser default)
+  //   ⌘P → focus search               (overrides browser print, like Notion)
+  //   ⌘J → focus per-person chat      (no browser default)
   function onKey(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey;
-    if (!mod || !e.shiftKey || e.altKey) return;
+    if (!mod || e.shiftKey || e.altKey) return;
     const k = e.key.toLowerCase();
-    if (k === 'a') {
+    if (k === 'e') {
       e.preventDefault();
       addOpen = true;
-    } else if (k === 'f') {
+    } else if (k === 'p') {
       e.preventDefault();
       searchEl?.focus();
       searchEl?.select();
-    } else if (k === 'c') {
+    } else if (k === 'j') {
       e.preventDefault();
       window.dispatchEvent(new CustomEvent('superconnector:focus-person-chat'));
     }
@@ -112,9 +114,8 @@
   // OS-aware kbd glyphs for the on-screen hints.
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const kbdMod = isMac ? '⌘' : 'Ctrl+';
-  const kbdShift = isMac ? '⇧' : 'Shift+';
-  const kbdAdd = `${kbdMod}${kbdShift}A`;
-  const kbdFind = `${kbdMod}${kbdShift}F`;
+  const kbdAdd = `${kbdMod}E`;
+  const kbdFind = `${kbdMod}P`;
 
   let meId = $state<string | null>(null);
   $effect(() => { void loadMe(); });
@@ -204,7 +205,7 @@
       <span class="spacer"></span>
       <button class="filters-toggle" onclick={() => (filtersOpen = !filtersOpen)} aria-expanded={filtersOpen}>
         <Icon name="filter" size={14} />
-        Filters{(roles.length + tags.length) > 0 ? ` · ${roles.length + tags.length}` : ''}
+        Filters{roles.length > 0 ? ` · ${roles.length}` : ''}
         <Icon name="chevron-down" size={12} />
       </button>
     </div>
@@ -216,33 +217,6 @@
           {#each ROLE_OPTIONS as r}
             <button class="chip" class:active={roles.includes(r)} onclick={() => toggleRole(r)}>{r}</button>
           {/each}
-        </div>
-        <div class="label row">
-          <span>Tags</span>
-          <span class="spacer"></span>
-          <SegmentedToggle
-            ariaLabel="Tag combine mode"
-            options={[
-              { value: 'or', label: 'Match any' },
-              { value: 'and', label: 'Match all' },
-            ]}
-            bind:selected={tagMode}
-          />
-        </div>
-        <div class="chips chips-tags">
-          {#if allTags.length === 0}
-            <span class="muted small">no tags yet</span>
-          {/if}
-          {#each (tagsExpanded ? allTags : allTags.slice(0, TAG_COLLAPSED_LIMIT)) as t}
-            <button class="chip" class:active={tags.includes(t.name)} onclick={() => toggleTag(t.name)}>
-              {t.name}<span class="muted small">·{t.use_count}</span>
-            </button>
-          {/each}
-          {#if allTags.length > TAG_COLLAPSED_LIMIT}
-            <button class="chip more" onclick={() => (tagsExpanded = !tagsExpanded)}>
-              {tagsExpanded ? 'less' : `+${allTags.length - TAG_COLLAPSED_LIMIT} more`}
-            </button>
-          {/if}
         </div>
       </div>
     {/if}
@@ -358,7 +332,6 @@
   .filters { display: flex; flex-direction: column; gap: 6px; }
   .label { font-size: 12px; color: var(--muted); margin-top: 8px; }
   .chips { display: flex; flex-wrap: wrap; gap: 4px; }
-  .chips-tags { max-height: 30vh; overflow-y: auto; }
   .chip.more { background: white; border-style: dashed; }
 
   .search-wrap { position: relative; display: flex; }
@@ -386,15 +359,16 @@
     transform: translateY(-50%);
     pointer-events: none;
     color: var(--muted);
-    font-size: 10px;
-    line-height: 14px;
-    padding: 0 6px;
+    font-size: 12px;
+    line-height: 16px;
+    padding: 1px 6px;
     background: rgba(0, 0, 0, 0.04);
     border: 1px solid var(--border);
     border-radius: 4px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .search-input:focus + .search-kbd { opacity: 0; }
+  .search-input { padding-right: 64px; }
 
   .sort-row { display: flex; gap: 8px; align-items: center; }
   .sort-menu { position: relative; }
@@ -475,13 +449,13 @@
   .add-person-btn:hover { background: var(--hover); border-color: var(--muted); }
   .kbd-inline {
     display: inline-block;
-    padding: 0 5px;
-    margin-left: 4px;
+    padding: 1px 6px;
+    margin-left: 6px;
     background: rgba(0, 0, 0, 0.06);
     border: 1px solid var(--border);
-    border-radius: 3px;
-    font-size: 10px;
-    line-height: 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 16px;
     color: var(--muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }

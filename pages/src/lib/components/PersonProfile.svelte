@@ -667,13 +667,15 @@
   </section>
 
   <!-- ======================================================== CHAT -->
-  <section class="card chat-card">
-    <header class="card-hd">
-      <h3><span class="hd-dot chat-dot"></span>Per-person chat</h3>
-      <button class="btn small ghost" onclick={() => (chatThreadId = ulid())}>
-        <Icon name="plus" size={12} /> new
-      </button>
-    </header>
+  <section class="card chat-card" class:collapsed={!chatHistoryVisible}>
+    {#if chatHistoryVisible}
+      <header class="card-hd">
+        <h3><span class="hd-dot chat-dot"></span>Per-person chat</h3>
+        <button class="btn small ghost" onclick={() => (chatThreadId = ulid())}>
+          <Icon name="plus" size={12} /> new
+        </button>
+      </header>
+    {/if}
     <div class="chatbox" class:collapsed={!chatHistoryVisible}>
       {#if chatThreadId}
         <ChatPane
@@ -1120,6 +1122,13 @@
     background: white;
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.06);
   }
+  /* In collapsed mode the card has no header and only the composer row.
+     Strip its top/side padding so the composer sits flush at the bottom
+     edge of the viewport. */
+  .chat-card.collapsed {
+    padding: 0;
+    border-top: 1px solid var(--border);
+  }
   /* When the history is shown, give it room to scroll. When collapsed,
      the chatbox shrinks to whatever the composer needs. */
   .chatbox {
@@ -1129,7 +1138,11 @@
     overflow: hidden;
     transition: height 160ms ease;
   }
-  .chatbox.collapsed { height: auto; }
+  .chatbox.collapsed {
+    height: auto;
+    border-top: 0;
+    margin: 0;
+  }
   /* Round only the bottom corners since the chatbox is flush with the card edge. */
   .chat-card .chatbox {
     border-bottom-left-radius: 12px;

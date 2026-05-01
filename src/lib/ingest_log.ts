@@ -9,6 +9,7 @@ export type Disposition =
   | 'processed'
   | 'skipped_solo'
   | 'skipped_group'
+  | 'skipped_future'
   | 'queued'
   | 'errored'
   | 'reprocessed';

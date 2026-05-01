@@ -1,5 +1,6 @@
 import type { Env } from '../../worker-configuration';
 import { cached, jsonCall, MODEL_HAIKU } from './anthropic';
+import { TAG_NAMING_RULES } from './tag_norm';
 
 const EXTRACT_GUIDE = `You extract structured updates from a meeting transcript or freetext dictation. The transcript has TWO parties:
 
@@ -145,7 +146,7 @@ export async function extractFromMeeting(
 
   return await jsonCall<ExtractionResult>(env, {
     model: MODEL_HAIKU,
-    systemBlocks: [cached(EXTRACT_GUIDE)],
+    systemBlocks: [cached(EXTRACT_GUIDE), cached(TAG_NAMING_RULES)],
     userMessage: userBody,
     maxTokens: 4096,
   });

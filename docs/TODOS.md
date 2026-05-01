@@ -1763,6 +1763,143 @@ zero matches in user-facing surfaces (it's fine in code/logs).
 
 ---
 
+## AK. "Recent meeting" appears for people we haven't actually met
+
+**Symptoms (2026-04-30):**
+- Yoav Tazfati profile shows a recent meeting; user has only an
+  *upcoming* calendar invite for tomorrow.
+- Tom McLeod profile shows a recent meeting; user added him via chat
+  ("We met at Blue Dot Dinner on Feb 20") but no actual meeting row
+  should exist dated Feb 20.
+
+**Two distinct root causes:**
+
+1. **Granola auto-creates notes for upcoming calendar events.** When
+   the user has a calendar invite (e.g. tomorrow), Granola's app
+   pre-creates a note bound to that event. Our ingest pulls every
+   note whose `created_at` is after the high-water mark and
+   materializes a `meetings` row regardless of whether the meeting
+   has actually happened. So upcoming events leak in as "past
+   meetings".
+
+   **Fix.** In `processNote` (`src/cron/ingest.ts`) and
+   `materializeFromGranolaNote` (`src/lib/queue_resolve.ts`):
+   ```ts
+   // If the note is bound to a calendar event whose start time is in
+   // the future, skip — re-ingest after the meeting actually happens.
+   const start = note.calendar_event?.start_time;
+   if (start && new Date(start).getTime() > Date.now()) {
+     await logDisposition(env, note, 'skipped_future_event',
+       `event starts ${start}, meeting hasn't happened yet`, null, null);
+     return 'skipped';
+   }
+   ```
+   Don't advance the high-water mark past these — they need to be
+   re-fetched on a later tick. Easiest: don't update `lastRef` when
+   we skip for this reason. Actually simpler: the existing
+   `getExistingMeeting` lookup will skip duplicates next tick anyway,
+   so just process them when the start time has passed.
+
+   Also: a **transcript-presence sanity check** as belt-and-braces —
+   if a note has no transcript at all and `calendar_event.start_time`
+   is in the future or < 60 minutes ago, skip. A real meeting
+   produces a transcript.
+
+2. **`dictate` tool stamps `meetings.recorded_at = now`** even when
+   the dictation describes a past meeting. So `Tom McLeod, met Feb 20`
+   becomes a meeting dated today.
+
+   **Fix options.**
+   - **Cheap**: stop creating a `meetings` row from `dictate`. The
+     dictation is annotation about the *person*, not a meeting record.
+     Apply the extracted updates directly to the person row; skip
+     the meetings INSERT. Signals can attach to a synthetic
+     `meeting_id` column or, better, allow `signals.meeting_id` to be
+     null (it is) and just set `kind='note'` for dictation-derived
+     facts.
+   - **Better**: extract a date from the dictation when present
+     ("Feb 20", "yesterday", "last Tuesday") via Haiku, stamp
+     `recorded_at` accordingly. Fall back to `now` only when no date
+     is detectable.
+
+**Backfill / cleanup.**
+
+One-shot admin endpoint
+`POST /api/admin/cleanup-future-meetings` that finds rows where
+`event_start > now()` (or `recorded_at > now()`), and either deletes
+them or pushes them to a `pending_future` status so the user can
+review. Single-user scale: a handful of rows max.
+
+For dictation-stamped meetings already inserted with `now`: these are
+harder to detect because there's no signal that distinguishes them
+from a legitimate same-day meeting. Best we can do is: list every
+meeting with `source = 'user_dictation'` and `recorded_at = created_at`
+(within seconds), and surface them in an admin view for the user to
+manually fix or delete.
+
+**Touch points.**
+- `src/cron/ingest.ts` — `processNote` future-event guard.
+- `src/lib/queue_resolve.ts` — same guard.
+- `src/tools/dictate.ts` — either drop the meeting row or detect a
+  date.
+- `src/index.ts` — admin endpoint.
+- `src/lib/ingest_log.ts` — add `'skipped_future_event'` to the
+  Disposition union.
+
+**Knock-on effects.**
+- The "Today's meetings" section of the daily email is read from ICS
+  directly, not from `meetings`, so it's unaffected.
+- The "magical" sort uses `last_met_date` which TODO W's backfill
+  endpoint already recomputes from `meetings.recorded_at`. After this
+  fix lands, run `/api/admin/backfill-last-met` again.
+
+---
+
+## AL. Persist people-list sort + filters across refreshes
+
+The People sidebar (`pages/src/routes/people/+layout.svelte`) holds
+`sort`, `tags`, `roles`, `tagMode`, and `q` as `$state` — they reset on
+every page load. User wants them to survive refreshes / browser restarts.
+
+**Approach.** localStorage, keyed under a single object so we
+serialize once.
+
+```ts
+// Init from storage on mount (typeof window guard for SSR safety).
+const KEY = 'superconnector:people-list-state-v1';
+type Persisted = { sort: SortMode; tags: string[]; roles: string[]; tagMode: 'and'|'or'; q: string };
+function load(): Partial<Persisted> {
+  if (typeof localStorage === 'undefined') return {};
+  try { return JSON.parse(localStorage.getItem(KEY) ?? '{}'); } catch { return {}; }
+}
+const saved = load();
+let sort = $state<SortMode>(saved.sort ?? 'magical');
+let tags = $state<string[]>(saved.tags ?? []);
+// ...
+
+// Save whenever any input changes.
+$effect(() => {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(KEY, JSON.stringify({ sort, tags, roles, tagMode, q }));
+});
+```
+
+**Edge cases.**
+- Don't persist `q`: search text feels stale on a fresh load. Decide
+  case-by-case; user said "sort and filters", so probably skip search.
+- Bump the `KEY` version (`-v1` → `-v2`) when the persisted shape
+  changes — old entries become unreadable and we silently fall back.
+- The same-origin Pages worker means localStorage works as expected
+  per-domain; no Workers KV needed.
+
+**Touch points.**
+- `pages/src/routes/people/+layout.svelte` — load on init + save in an
+  $effect.
+- Optionally also persist `chatHistoryVisible` in PersonProfile for
+  the same reason.
+
+---
+
 ## Done (recent)
 
 For context — these were resolved in the most recent agent session:

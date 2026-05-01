@@ -8,6 +8,7 @@ import {
   type GranolaAttendee,
   transcriptToString,
   isSoloNote,
+  isFutureEventNote,
   noteContentHash,
 } from '../lib/granola';
 import { fetchIcs, eventsAround, type IcsEvent } from '../lib/ics';
@@ -150,6 +151,17 @@ async function processNote(
   icsEventsAll: IcsEvent[],
   contentHash: string,
 ): Promise<ProcessOutcome> {
+  // Granola pre-creates notes for upcoming calendar events. We don't want
+  // to register a "past meeting" for something that hasn't happened yet
+  // (it leaks into recent-meeting widgets and last_met_date). Skip until
+  // the event start time has passed; the note will be re-checked on a
+  // subsequent ingest tick because we don't advance source_updated_at
+  // for skipped rows.
+  if (isFutureEventNote(note)) {
+    await logDisposition(env, note, 'skipped_future', 'event has not started yet', null, null);
+    return 'skipped';
+  }
+
   // Solo notes (personal brainstorming, no other attendees, no calendar event)
   // shouldn't enter the people graph at all — skip silently but log so the
   // user can see what was filtered.

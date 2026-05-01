@@ -11,7 +11,7 @@
 //  - runs Haiku extraction and applies the result to the person.
 
 import type { Env } from '../../worker-configuration';
-import { GranolaClient, transcriptToString, noteContentHash } from './granola';
+import { GranolaClient, transcriptToString, noteContentHash, isFutureEventNote } from './granola';
 import { resolvePerson } from './resolve';
 import { extractFromMeeting } from './extract';
 import { applyExtractionResult } from './people_writes';
@@ -41,6 +41,9 @@ export async function materializeFromGranolaNote(
 ): Promise<MaterializeResult> {
   const granola = new GranolaClient(env.GRANOLA_API_KEY);
   const note = await granola.getNote(opts.noteId);
+  if (isFutureEventNote(note)) {
+    throw new Error('cannot materialize: this note is bound to an upcoming calendar event that has not occurred yet');
+  }
 
   // If the note has already been turned into a meeting (e.g. the user
   // resolved twice), reuse it.

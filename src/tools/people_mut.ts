@@ -8,6 +8,7 @@ import { upsertPersonVector } from '../lib/embed';
 import { nowIso } from '../lib/ulid';
 import type { PersonRow } from '../lib/db';
 import { parseJsonArray, parseJsonObject } from '../lib/db';
+import { normalizeTagArray } from '../lib/tag_norm';
 
 interface AddInput {
   name?: string;
@@ -34,7 +35,7 @@ export const addPersonTool: Tool<AddInput, { person_id: string; created: boolean
     if (input.initial_context || input.roles) {
       const existing = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(r.personId).first<PersonRow>();
       if (existing) {
-        const newRoles = mergeArr(parseJsonArray(existing.roles), input.roles);
+        const newRoles = mergeArr(parseJsonArray(existing.roles), normalizeTagArray(input.roles));
         const newContext = existing.context_manual_override
           ? existing.context
           : input.initial_context ?? existing.context;
@@ -106,8 +107,12 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     const newHome = input.home_location !== undefined ? (input.home_location.trim() || null) : existing.home_location;
     const newWorkLoc = input.work_location !== undefined ? (input.work_location.trim() || null) : existing.work_location;
     const newWorkOrg = input.work_org !== undefined ? (input.work_org.trim() || null) : existing.work_org;
-    const newRoles = input.roles_set !== undefined ? input.roles_set : parseJsonArray(existing.roles);
-    const newTraj = input.trajectory_tags_set !== undefined ? input.trajectory_tags_set : parseJsonArray(existing.trajectory_tags);
+    const newRoles = input.roles_set !== undefined
+      ? (normalizeTagArray(input.roles_set) ?? [])
+      : parseJsonArray(existing.roles);
+    const newTraj = input.trajectory_tags_set !== undefined
+      ? (normalizeTagArray(input.trajectory_tags_set) ?? [])
+      : parseJsonArray(existing.trajectory_tags);
     const newStatus = input.status_patch ? { ...parseJsonObject(existing.status), ...input.status_patch } : parseJsonObject(existing.status);
     let newContext = existing.context;
     if (input.context_replacement !== undefined) newContext = input.context_replacement;

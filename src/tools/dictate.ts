@@ -1,12 +1,18 @@
 // Free-form dictation that runs through the same extraction pipeline as
 // Granola notes. The user says "I just met Sarah at OpenAI…" or "Sarah just
 // left OpenAI" and the tool resolves/creates the person and applies updates.
+//
+// Important: dictation is *annotation*, not a meeting record. We do NOT
+// create a meetings row, do NOT bump meeting_count, and do NOT touch
+// last_met_date. Otherwise dictating "Met Tom at Blue Dot Dinner on Feb 20"
+// in late April would create a phantom Feb-20 meeting on the user's
+// timeline, which is misleading. Signals carry the dictated facts with
+// meeting_id NULL.
 
 import type { Tool } from './types';
 import { resolvePerson } from '../lib/resolve';
 import { extractFromMeeting } from '../lib/extract';
 import { applyExtractionResult } from '../lib/people_writes';
-import { ulid, nowIso } from '../lib/ulid';
 
 interface Input {
   name?: string;
@@ -17,7 +23,6 @@ interface Input {
 
 interface Output {
   person_id: string;
-  meeting_id: string;
   created_person: boolean;
   ambiguous_resolution: boolean;
 }
@@ -25,7 +30,7 @@ interface Output {
 export const dictateTool: Tool<Input, Output> = {
   name: 'dictate',
   description:
-    'Add freetext info about a person ("Sarah just left OpenAI", "I met Alex at the AISI dinner — he\'s exploring founding"). Resolves or creates the person and runs the same extraction pipeline as Granola notes.',
+    'Add freetext info about a person ("Sarah just left OpenAI", "I met Alex at the AISI dinner — he\'s exploring founding"). Resolves or creates the person and runs the same extraction pipeline as Granola notes. Does NOT record a meeting — use this for annotation, not for logging that a meeting happened.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -42,36 +47,25 @@ export const dictateTool: Tool<Input, Output> = {
     if (r.ambiguous) {
       return {
         person_id: '',
-        meeting_id: '',
         created_person: false,
         ambiguous_resolution: true,
       };
     }
-    const meetingId = ulid();
-    const now = nowIso();
-    await env.DB.prepare(
-      `INSERT INTO meetings (
-         id, person_id, source, source_ref, recorded_at, meeting_context,
-         calendar_match_confidence, event_title, event_start, event_end,
-         attendees_at_match, transcript, summary, classification, created_at
-       ) VALUES (?1,?2,?3,NULL,?4,NULL,NULL,NULL,NULL,NULL,NULL,?5,NULL,'1:1',?6)`,
-    ).bind(meetingId, r.personId, input.source, now, input.text, now).run();
 
     const result = await extractFromMeeting(env, {
       source: input.source,
       transcript: input.text,
     });
-    // Manual dictation has no separate meeting time — `now` is correct here.
+    // meetingId: null → applyExtractionResult skips meeting_count + last_met_date
+    // and inserts signals with meeting_id NULL (annotation-only path).
     await applyExtractionResult(env, {
       personId: r.personId,
-      meetingId,
+      meetingId: null,
       result,
-      meetingRecordedAt: now,
     });
 
     return {
       person_id: r.personId,
-      meeting_id: meetingId,
       created_person: r.created,
       ambiguous_resolution: false,
     };

@@ -203,6 +203,41 @@ app.post('/api/admin/normalize-tags', requireAuth, async (c) => {
   });
 });
 
+// Admin: delete meeting rows whose event_start (or recorded_at, when no
+// event_start exists) is in the future. Granola pre-creates notes for
+// upcoming calendar invites; before the future-event guard landed those
+// could leak in as "past meetings". Cleans up the leak. Also recomputes
+// last_met_date / meeting_count for affected people.
+app.post('/api/admin/cleanup-future-meetings', requireAuth, async (c) => {
+  const nowIso = new Date().toISOString();
+  const found = await c.env.DB.prepare(
+    `SELECT id, person_id FROM meetings
+      WHERE (event_start IS NOT NULL AND event_start > ?1)
+         OR (event_start IS NULL AND recorded_at > ?1)`,
+  ).bind(nowIso).all<{ id: string; person_id: string | null }>();
+  const rows = found.results ?? [];
+  const personIds = new Set<string>();
+  for (const r of rows) {
+    if (r.person_id) personIds.add(r.person_id);
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM signals WHERE meeting_id = ?1').bind(r.id),
+      c.env.DB.prepare('DELETE FROM followups WHERE meeting_id = ?1').bind(r.id),
+      c.env.DB.prepare('DELETE FROM meetings WHERE id = ?1').bind(r.id),
+    ]);
+  }
+  // Recompute last_met_date / meeting_count for people whose meetings we just removed.
+  for (const pid of personIds) {
+    await c.env.DB.prepare(
+      `UPDATE people SET
+         last_met_date = (SELECT substr(MAX(recorded_at), 1, 10) FROM meetings WHERE person_id = ?1),
+         meeting_count = (SELECT COUNT(*) FROM meetings WHERE person_id = ?1),
+         updated_at = ?2
+       WHERE id = ?1`,
+    ).bind(pid, nowIso).run();
+  }
+  return c.json({ meetings_deleted: rows.length, people_recomputed: personIds.size });
+});
+
 // Admin: dismiss every pending queue item. Use after a logic change makes the
 // existing pending items stale.
 app.post('/api/admin/clear-queue', requireAuth, async (c) => {

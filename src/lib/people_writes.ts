@@ -8,14 +8,19 @@ import type { ExtractionResult, ExtractedPersonUpdates, ExtractedSignal } from '
 import type { PersonRow } from './db';
 import { parseJsonArray, parseJsonObject } from './db';
 import { upsertPersonVector } from './embed';
-import { normalizeTagName } from './tag_norm';
+import { normalizeTagName, normalizeTagArray } from './tag_norm';
 import { ulid, nowIso } from './ulid';
 
 const HIGH_CONFIDENCE = 0.7;
 
 export interface ApplyOptions {
   personId: string;
-  meetingId: string;
+  /** Meeting this extraction belongs to. When null/undefined, the extraction
+      is treated as a free-floating annotation: no meeting_count bump, no
+      last_met_date change, and signals are inserted with meeting_id NULL.
+      Used by the dictate tool so freeform "annotation" doesn't manufacture
+      a phantom past meeting. */
+  meetingId: string | null;
   result: ExtractionResult;
   /** ISO timestamp of when the meeting actually happened (the Granola note's
       `created_at`, or the manual-dictation time). Used to set `last_met_date`
@@ -47,14 +52,14 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
   const updates = result.person_updates;
   const lowConfidence = result.extraction_confidence < HIGH_CONFIDENCE;
 
-  if (reprocess) {
+  if (reprocess && meetingId) {
     await env.DB.prepare(
       `DELETE FROM signals WHERE meeting_id = ?1`,
     ).bind(meetingId).run();
     await env.DB.prepare(
       `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
     ).bind(now, personId).run();
-  } else {
+  } else if (meetingId) {
     // First ingest of this meeting — count it. last_met_date keeps the
     // greater of the existing value and this meeting's date so old notes
     // ingested after newer ones don't regress the indicator.
@@ -68,13 +73,18 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
            updated_at = ?2
        WHERE id = ?3`,
     ).bind(metDate, now, personId).run();
+  } else {
+    // No meeting attached (manual dictation / annotation). Just bump updated_at.
+    await env.DB.prepare(
+      `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
+    ).bind(now, personId).run();
   }
 
   // Direct writes for high-confidence cases.
   if (!lowConfidence) {
     const newDisplayName = updates.display_name ?? person.display_name ?? null;
-    const newRoles = mergeArray(parseJsonArray(person.roles), normalizeArray(updates.roles_add));
-    const newTraj = mergeArray(parseJsonArray(person.trajectory_tags), normalizeArray(updates.trajectory_tags_add));
+    const newRoles = mergeArray(parseJsonArray(person.roles), normalizeTagArray(updates.roles_add));
+    const newTraj = mergeArray(parseJsonArray(person.trajectory_tags), normalizeTagArray(updates.trajectory_tags_add));
     const newStatus = { ...parseJsonObject(person.status), ...(updates.status_patch ?? {}) };
 
     let newContext = person.context;
@@ -189,7 +199,7 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
 async function applySelfUpdates(
   env: Env,
   meId: string,
-  meetingId: string,
+  meetingId: string | null,
   updates: ExtractedPersonUpdates | undefined,
   signals: ExtractedSignal[] | undefined,
   lowConfidence: boolean,
@@ -200,8 +210,8 @@ async function applySelfUpdates(
 
   if (updates && !lowConfidence) {
     const newDisplayName = updates.display_name ?? me.display_name ?? null;
-    const newRoles = mergeArray(parseJsonArray(me.roles), normalizeArray(updates.roles_add));
-    const newTraj = mergeArray(parseJsonArray(me.trajectory_tags), normalizeArray(updates.trajectory_tags_add));
+    const newRoles = mergeArray(parseJsonArray(me.roles), normalizeTagArray(updates.roles_add));
+    const newTraj = mergeArray(parseJsonArray(me.trajectory_tags), normalizeTagArray(updates.trajectory_tags_add));
     const newStatus = { ...parseJsonObject(me.status), ...(updates.status_patch ?? {}) };
     let newContext = me.context;
     if (updates.context_delta) {
@@ -267,19 +277,3 @@ function mergeArray(existing: string[], incoming: string[] | undefined): string[
   return [...set];
 }
 
-// Normalize an array of LLM-emitted tag/role strings: spaces (not underscores)
-// between words, lowercased, collapsed whitespace, deduped, empties dropped.
-// Returns undefined when the input was undefined so mergeArray's no-op path
-// still fires.
-function normalizeArray(arr: string[] | undefined): string[] | undefined {
-  if (!arr) return undefined;
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const x of arr) {
-    const norm = normalizeTagName(x);
-    if (!norm || seen.has(norm)) continue;
-    seen.add(norm);
-    out.push(norm);
-  }
-  return out;
-}
