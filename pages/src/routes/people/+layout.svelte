@@ -86,23 +86,29 @@
 
   // Global keyboard shortcuts for the People section. Single-modifier
   // (Cmd on macOS, Ctrl elsewhere) so they fire even from inputs.
-  // Letters chosen to avoid the most common browser conflicts:
-  //   ⌘E → open Add Person modal     (no browser default)
-  //   ⌘P → focus search               (overrides browser print, like Notion)
-  //   ⌘J → focus per-person chat      (no browser default)
+  // Each shortcut is a TOGGLE — pressing it again undoes the action:
+  //   ⌘E → open Add Person modal (or close it if already open)
+  //   ⌘P → focus search (or blur it if it's already focused)
+  //   ⌘J → focus per-person chat (or blur it if it's already focused)
   function onKey(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey;
     if (!mod || e.shiftKey || e.altKey) return;
     const k = e.key.toLowerCase();
     if (k === 'e') {
       e.preventDefault();
-      addOpen = true;
+      addOpen = !addOpen;
     } else if (k === 'p') {
       e.preventDefault();
-      searchEl?.focus();
-      searchEl?.select();
+      if (searchEl && document.activeElement === searchEl) {
+        searchEl.blur();
+      } else {
+        searchEl?.focus();
+        searchEl?.select();
+      }
     } else if (k === 'j') {
       e.preventDefault();
+      // PersonProfile owns the textarea ref. Send a "toggle" event; if the
+      // chat textarea is currently focused, it'll blur, else it'll focus.
       window.dispatchEvent(new CustomEvent('superconnector:focus-person-chat'));
     }
   }

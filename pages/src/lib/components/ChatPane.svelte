@@ -41,13 +41,19 @@
     loadHistory();
   });
 
-  // Per-person ChatPane reacts to the global "focus the person chat"
-  // shortcut (`C` from the layout's keydown handler) by focusing its
-  // textarea. Master-chat is opened via ⌘K which already focuses there.
+  // Per-person ChatPane reacts to the global focus-person-chat shortcut
+  // (⌘J from the layout's keydown handler) as a toggle: focus the
+  // textarea, or blur it if it's already focused. Master-chat is opened
+  // via ⌘K which has its own toggle.
   $effect(() => {
     if (scope !== 'person') return;
     function onFocusEvent() {
-      textareaEl?.focus();
+      if (!textareaEl) return;
+      if (document.activeElement === textareaEl) {
+        textareaEl.blur();
+      } else {
+        textareaEl.focus();
+      }
     }
     window.addEventListener('superconnector:focus-person-chat', onFocusEvent);
     return () => window.removeEventListener('superconnector:focus-person-chat', onFocusEvent);
