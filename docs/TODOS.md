@@ -1440,6 +1440,123 @@ Worth fixing before any of those features mature.
 
 ---
 
+## X. Profile auxiliary actions menu (merge / delete behind a caret)
+
+The "Merge with…" action is currently an always-visible button at the top
+of the profile. Move it (and a destructive "Delete person" option, which
+doesn't exist yet) into a single dropdown caret in the top-right of the
+profile header — common pattern for low-frequency auxiliary actions.
+
+- New `<button class="caret">⋯</button>` in `PersonProfile.svelte`'s
+  header. Clicking opens a small popover with: "Merge with…", "Delete
+  person".
+- Delete needs a confirmation step ("Type the name to confirm"), and on
+  the backend a new `delete_person` tool / endpoint that also cascades
+  through `person_tags`, `signals`, `followups`, `chat_threads`,
+  `chat_messages`, `meetings.person_id` (probably hard-delete; we don't
+  have a soft-delete column today).
+- Pull the existing merge UI out into a child component so the dropdown
+  can mount it on demand.
+
+---
+
+## Y. Headline card: hide empty fields; "Add work location" icon; edit-mode
+
+Top card on a profile currently shows every header field even when empty,
+and the "Add work location" affordance has no icon (just text). Three
+small fixes:
+
+1. **Conditional render.** If a header field is null/empty (e.g. work
+   location, geo, role chips), don't render its row at all when in
+   read-mode. Empty placeholders make sparse profiles look cluttered.
+2. **Add a location icon** next to "Add work location" / location
+   display. Same treatment as the email/phone icons. Inline SVG, no
+   icon library needed.
+3. **Explicit edit mode.** Today, fields appear inline-editable on hover
+   or focus. Switch to: a small pencil icon top-right of the card that
+   toggles a `editing = $state(false)` flag. When false, render
+   read-only with empty fields hidden. When true, render every field as
+   an editable input (so the user can fill in the previously-hidden
+   ones). Save on blur or on toggling back.
+
+Touch points: `PersonProfile.svelte` header section.
+
+---
+
+## Z. Hide "Add followup" form behind a subtle right-aligned button
+
+The followup composer in the profile is always-visible and takes vertical
+space even when there's nothing to add. Replace the form with a small
+right-aligned `+ followup` button; clicking expands the form inline. Same
+pattern as a chat composer's attachment menu — discoverable, but not
+demanding.
+
+`PersonProfile.svelte`, followups section.
+
+---
+
+## AA. Soften "me" chat bubble contrast
+
+Per-person and master chat bubbles for the user's own messages currently
+use high-contrast (e.g. accent-on-white or black-on-white). Switch to a
+medium-gray background with black text — closer to iMessage / Notion
+inline-comment style. Less visual weight; lets the assistant's reply
+read as the focal content.
+
+Touch points: `pages/src/lib/components/ChatPane.svelte` and any
+shared message-bubble styles. Likely just a CSS variable swap.
+
+---
+
+## AB. Editable signals
+
+Signals (the per-meeting extracted facts on a profile) are currently
+read-only. Make them inline-editable: click the body text to edit, save
+on blur, plus a small `×` to delete. Also surface a "+ signal" button
+under the signals list for manual additions.
+
+Touch points:
+- `PersonProfile.svelte` signals section.
+- `src/api/people.ts` (or a new `src/api/signals.ts`) — PATCH and DELETE
+  routes for `signals` rows; restrict to signals belonging to the
+  authed user's people graph (single-user, so trivially true today).
+- New tools `update_signal`, `delete_signal`, `add_signal` so chat can
+  hit them too.
+
+Caveat: signals carry a `confidence` and a provenance link to a meeting.
+When the user edits, set `confidence = 1.0` and keep the original
+`meeting_id` so we don't lose the audit trail. When the user adds
+manually, leave `meeting_id` null.
+
+---
+
+## AC. Rename signal kind label "status change" → "Status"
+
+Cosmetic. The schema has a `signals.kind` enum including `status_change`;
+the UI renders it verbatim ("status change"). Change the rendered label
+to **Status** (Title-cased, single word) wherever signal kinds are shown.
+Don't touch the database value — just the display map in the frontend.
+
+Touch points: search the SvelteKit app for `'status_change'` and replace
+with a small `KIND_LABELS` map: `{ need: 'Need', offer: 'Offer',
+status_change: 'Status', commitment: 'Commitment', note: 'Note' }`.
+
+---
+
+## AD. People list left-pane: drop the metadata row
+
+The people list currently shows a second line per row with last-met
+date, meeting count, and tag preview. It's noisy at scan-time and
+duplicates info already on the profile. Strip the second line entirely
+in `PeopleList.svelte`; render only the name (and an avatar if AT-M
+lands). Filtering and sorting still happen in the sidebar above; users
+who want the metadata click into the profile.
+
+Keep the underlying API response unchanged — it's just a render-side
+edit in `pages/src/lib/components/PeopleList.svelte`.
+
+---
+
 ## Done (recent)
 
 For context — these were resolved in the most recent agent session:
