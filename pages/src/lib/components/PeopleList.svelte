@@ -62,7 +62,6 @@
         <div class="col">
           <div class="name">
             {p.display_name ?? p.email ?? '(unknown)'}
-            {#if p.roles.length}<span class="badge">{p.roles[0]}</span>{/if}
           </div>
         </div>
       </button>
