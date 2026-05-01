@@ -9,3 +9,9 @@ dist/
 *.log
 .vscode/
 .idea/
+
+# D1 dumps and Time Travel restore-point log live here, never in git.
+backups/*.sql
+backups/*.sql.gz
+backups/*.log
+!backups/.gitkeep

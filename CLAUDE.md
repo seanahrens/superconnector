@@ -129,6 +129,54 @@ the same means nothing was uploaded).
 - Don't write feature docs files unless asked — the source plus this folder
   is the documentation. Comments belong only when the *why* is non-obvious.
 
+## Data protection
+
+Threat model: an AI agent (or the user) misunderstands a request and clobbers
+the database via a bad migration, mass mutation, or wrong delete. Not infra
+compromise. Two layers cover this:
+
+1. **D1 Time Travel** — Cloudflare keeps a continuous restore log of the last
+   30 days, free on Workers Paid. Restore to any second:
+   ```
+   npx wrangler d1 time-travel restore superconnector --timestamp=2026-04-30T14:23:00Z
+   ```
+   `scripts/deploy.sh` automatically logs the pre-deploy timestamp into
+   `backups/restore-points.log` (gitignored, lives only on the user's Mac)
+   so the rollback target is exact, not a guess. Run
+   `scripts/restore-point.sh "<label>"` manually before any other risky
+   operation (admin endpoints, schema migrations).
+
+2. **Monthly off-site dump** — `scripts/backup.sh` runs `wrangler d1 export`
+   and writes a gzipped SQL dump to `backups/superconnector-YYYY-MM-DD.sql.gz`.
+   Run manually, or schedule via macOS launchd (sample plist below). Keeps
+   the historical record beyond Time Travel's 30-day window.
+
+   To restore from a dump:
+   ```
+   gunzip -c backups/superconnector-2026-04-01.sql.gz \
+     | npx wrangler d1 execute superconnector --remote --file=/dev/stdin
+   ```
+
+   Sample launchd plist (`~/Library/LaunchAgents/com.superconnector.backup.plist`,
+   adjust the path to the repo, then `launchctl load <plist>`):
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <plist version="1.0"><dict>
+     <key>Label</key><string>com.superconnector.backup</string>
+     <key>ProgramArguments</key>
+     <array>
+       <string>/bin/bash</string>
+       <string>-lc</string>
+       <string>cd /Users/seanahrens/superconnector && scripts/backup.sh</string>
+     </array>
+     <key>StartCalendarInterval</key>
+     <dict><key>Day</key><integer>1</integer>
+           <key>Hour</key><integer>9</integer></dict>
+     <key>StandardErrorPath</key>
+     <string>/Users/seanahrens/superconnector/backups/launchd.err</string>
+   </dict></plist>
+   ```
+
 ## What still hurts and where to look
 
 See `docs/TODOS.md` for the current backlog and `docs/GOTCHAS.md` for the
