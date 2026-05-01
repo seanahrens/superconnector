@@ -133,32 +133,44 @@ the same means nothing was uploaded).
 
 Threat model: an AI agent (or the user) misunderstands a request and clobbers
 the database via a bad migration, mass mutation, or wrong delete. Not infra
-compromise. Two layers cover this:
+compromise. Three layers, each cheap, with overlapping coverage:
 
-1. **D1 Time Travel** — Cloudflare keeps a continuous restore log of the last
-   30 days, free on Workers Paid. Restore to any second:
+1. **D1 Time Travel (last 30 days, in-place rollback).** Cloudflare keeps a
+   continuous restore log automatically — free on Workers Paid. Restore to
+   any second within 30 days:
    ```
    npx wrangler d1 time-travel restore superconnector --timestamp=2026-04-30T14:23:00Z
    ```
-   `scripts/deploy.sh` automatically logs the pre-deploy timestamp into
-   `backups/restore-points.log` (gitignored, lives only on the user's Mac)
-   so the rollback target is exact, not a guess. Run
-   `scripts/restore-point.sh "<label>"` manually before any other risky
-   operation (admin endpoints, schema migrations).
+   `scripts/deploy.sh` automatically logs the pre-deploy timestamp to
+   `backups/restore-points.log` (gitignored, on the user's Mac) so the
+   rollback target is exact, not a guess. Run `scripts/restore-point.sh
+   "<label>"` manually before any other risky operation.
 
-2. **Monthly off-site dump** — `scripts/backup.sh` runs `wrangler d1 export`
-   and writes a gzipped SQL dump to `backups/superconnector-YYYY-MM-DD.sql.gz`.
-   Run manually, or schedule via macOS launchd (sample plist below). Keeps
-   the historical record beyond Time Travel's 30-day window.
+2. **Worker-side weekly D1 → R2 dump (last 12 weeks, on Cloudflare).**
+   Implemented in `src/cron/backup.ts` (function `runBackup`) and bound to
+   the `BACKUPS` R2 bucket in `wrangler.toml`. Each run writes
+   `superconnector/backups/YYYY-MM-DD.sql` and prunes anything older than
+   the 12 most recent. Trigger manually via `POST /api/run/backup` with the
+   `WEB_AUTH_SECRET`. The corresponding cron schedule lives in `wrangler.toml`
+   `[triggers]` — verify it's set to a weekly cadence before relying on it.
+   Total cost: ~$0/mo (R2 free tier dwarfs our footprint).
 
-   To restore from a dump:
+3. **Monthly local-Mac dump (off-Cloudflare insurance).** `scripts/backup.sh`
+   runs `wrangler d1 export --remote` and writes a gzipped SQL dump to
+   `backups/superconnector-YYYY-MM-DD.sql.gz` on the user's machine. Run
+   manually or schedule via macOS launchd (plist below). This is the only
+   layer that survives a Cloudflare account being lost or locked; keep it
+   even though that's a low-likelihood failure mode.
+
+   Restore from any dump (R2 or local):
    ```
    gunzip -c backups/superconnector-2026-04-01.sql.gz \
      | npx wrangler d1 execute superconnector --remote --file=/dev/stdin
    ```
 
-   Sample launchd plist (`~/Library/LaunchAgents/com.superconnector.backup.plist`,
-   adjust the path to the repo, then `launchctl load <plist>`):
+   Sample launchd plist
+   (`~/Library/LaunchAgents/com.superconnector.backup.plist`; edit the path
+   to your clone, then `launchctl load <plist>`):
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
    <plist version="1.0"><dict>
@@ -176,6 +188,13 @@ compromise. Two layers cover this:
      <string>/Users/seanahrens/superconnector/backups/launchd.err</string>
    </dict></plist>
    ```
+
+**Which layer to use when:**
+- "I just dropped a table 10 minutes ago" → Time Travel (1).
+- "An agent corrupted half the people rows last week" → Time Travel (1) if
+  inside 30 days, else R2 dump (2).
+- "I want February's state in November" → R2 dump (2).
+- "Cloudflare account is gone" → local Mac dump (3).
 
 ## What still hurts and where to look
 
