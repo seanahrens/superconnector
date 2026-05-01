@@ -203,6 +203,42 @@ app.post('/api/admin/normalize-tags', requireAuth, async (c) => {
   });
 });
 
+// Admin: delete every meetings row with source='user_dictation'. The
+// dictate tool used to manufacture a meetings row whenever someone added
+// a person via chat, which leaked into "recent meetings" with a recorded_at
+// of when the dictation happened (not when the meeting actually occurred).
+// dictate no longer creates a meetings row, so anything still in the DB
+// with this source is spurious. Idempotent. Recomputes last_met_date /
+// meeting_count for affected people.
+app.post('/api/admin/cleanup-dictation-meetings', requireAuth, async (c) => {
+  const found = await c.env.DB.prepare(
+    `SELECT id, person_id FROM meetings WHERE source = 'user_dictation'`,
+  ).all<{ id: string; person_id: string | null }>();
+  const rows = found.results ?? [];
+  const personIds = new Set<string>();
+  for (const r of rows) {
+    if (r.person_id) personIds.add(r.person_id);
+    await c.env.DB.batch([
+      // Detach signals from the meeting (keep the signal — its body is
+      // useful — but it shouldn't anchor a phantom meeting).
+      c.env.DB.prepare('UPDATE signals SET meeting_id = NULL WHERE meeting_id = ?1').bind(r.id),
+      c.env.DB.prepare('UPDATE followups SET meeting_id = NULL WHERE meeting_id = ?1').bind(r.id),
+      c.env.DB.prepare('DELETE FROM meetings WHERE id = ?1').bind(r.id),
+    ]);
+  }
+  const nowIso = new Date().toISOString();
+  for (const pid of personIds) {
+    await c.env.DB.prepare(
+      `UPDATE people SET
+         last_met_date = (SELECT substr(MAX(recorded_at), 1, 10) FROM meetings WHERE person_id = ?1),
+         meeting_count = (SELECT COUNT(*) FROM meetings WHERE person_id = ?1),
+         updated_at = ?2
+       WHERE id = ?1`,
+    ).bind(pid, nowIso).run();
+  }
+  return c.json({ meetings_deleted: rows.length, people_recomputed: personIds.size });
+});
+
 // Admin: delete meeting rows whose event_start (or recorded_at, when no
 // event_start exists) is in the future. Granola pre-creates notes for
 // upcoming calendar invites; before the future-event guard landed those
