@@ -406,6 +406,7 @@ async function processNote(
     personId: resolved.personId,
     meetingId,
     result,
+    meetingRecordedAt: note.created_at,
     mePersonId: me?.id ?? null,
   });
   await logDisposition(env, note, 'processed', 'classifier 1:1 path', meetingId, resolved.personId);
@@ -590,6 +591,7 @@ async function reprocessNote(
     meetingId: existing.id,
     result,
     reprocess: true,
+    meetingRecordedAt: note.created_at,
     mePersonId: me?.id ?? null,
   });
   return 'reprocessed';

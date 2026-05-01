@@ -17,6 +17,11 @@ export interface ApplyOptions {
   personId: string;
   meetingId: string;
   result: ExtractionResult;
+  /** ISO timestamp of when the meeting actually happened (the Granola note's
+      `created_at`, or the manual-dictation time). Used to set `last_met_date`
+      to the *meeting* date, not the time the ingest cron happened to run.
+      Older meetings ingested later don't back-date the field — we use MAX. */
+  meetingRecordedAt?: string | null;
   // True when re-applying extraction for a Granola note whose content
   // changed since it was first ingested. We then skip bumping meeting_count
   // and last_met_date (the meeting is the same), and we wipe prior signals
@@ -30,8 +35,11 @@ export interface ApplyOptions {
 }
 
 export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promise<void> {
-  const { personId, meetingId, result, reprocess } = opts;
+  const { personId, meetingId, result, reprocess, meetingRecordedAt } = opts;
   const now = nowIso();
+  // Date the meeting was actually held. Falls back to today only if the
+  // caller didn't supply one (manual dictation with no timestamp).
+  const metDate = (meetingRecordedAt ?? now).slice(0, 10);
 
   const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(personId).first<PersonRow>();
   if (!person) throw new Error(`person not found: ${personId}`);
@@ -47,21 +55,26 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
       `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
     ).bind(now, personId).run();
   } else {
-    // First ingest of this meeting — count it.
+    // First ingest of this meeting — count it. last_met_date keeps the
+    // greater of the existing value and this meeting's date so old notes
+    // ingested after newer ones don't regress the indicator.
     await env.DB.prepare(
       `UPDATE people
-       SET last_met_date = ?1,
+       SET last_met_date = CASE
+             WHEN last_met_date IS NULL OR ?1 > last_met_date THEN ?1
+             ELSE last_met_date
+           END,
            meeting_count = meeting_count + 1,
            updated_at = ?2
        WHERE id = ?3`,
-    ).bind(now.slice(0, 10), now, personId).run();
+    ).bind(metDate, now, personId).run();
   }
 
   // Direct writes for high-confidence cases.
   if (!lowConfidence) {
     const newDisplayName = updates.display_name ?? person.display_name ?? null;
-    const newRoles = mergeArray(parseJsonArray(person.roles), updates.roles_add);
-    const newTraj = mergeArray(parseJsonArray(person.trajectory_tags), updates.trajectory_tags_add);
+    const newRoles = mergeArray(parseJsonArray(person.roles), normalizeArray(updates.roles_add));
+    const newTraj = mergeArray(parseJsonArray(person.trajectory_tags), normalizeArray(updates.trajectory_tags_add));
     const newStatus = { ...parseJsonObject(person.status), ...(updates.status_patch ?? {}) };
 
     let newContext = person.context;
@@ -187,8 +200,8 @@ async function applySelfUpdates(
 
   if (updates && !lowConfidence) {
     const newDisplayName = updates.display_name ?? me.display_name ?? null;
-    const newRoles = mergeArray(parseJsonArray(me.roles), updates.roles_add);
-    const newTraj = mergeArray(parseJsonArray(me.trajectory_tags), updates.trajectory_tags_add);
+    const newRoles = mergeArray(parseJsonArray(me.roles), normalizeArray(updates.roles_add));
+    const newTraj = mergeArray(parseJsonArray(me.trajectory_tags), normalizeArray(updates.trajectory_tags_add));
     const newStatus = { ...parseJsonObject(me.status), ...(updates.status_patch ?? {}) };
     let newContext = me.context;
     if (updates.context_delta) {
@@ -252,4 +265,21 @@ function mergeArray(existing: string[], incoming: string[] | undefined): string[
   const set = new Set(existing);
   for (const x of incoming) set.add(x);
   return [...set];
+}
+
+// Normalize an array of LLM-emitted tag/role strings: spaces (not underscores)
+// between words, lowercased, collapsed whitespace, deduped, empties dropped.
+// Returns undefined when the input was undefined so mergeArray's no-op path
+// still fires.
+function normalizeArray(arr: string[] | undefined): string[] | undefined {
+  if (!arr) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const x of arr) {
+    const norm = normalizeTagName(x);
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(norm);
+  }
+  return out;
 }

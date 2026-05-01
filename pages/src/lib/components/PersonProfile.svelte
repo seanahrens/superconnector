@@ -109,6 +109,9 @@
 
   let newFollowupBody = $state('');
   let newFollowupDue = $state('');
+  // Hide the "add followup" form until the user explicitly opens it. Reduces
+  // visual weight on profiles with no pending followups.
+  let addingFollowup = $state(false);
   let creatingFollowup = $state(false);
 
   async function createFollowup() {
@@ -123,11 +126,25 @@
       });
       newFollowupBody = '';
       newFollowupDue = '';
+      addingFollowup = false;
       followupTab = 'open';
       await onChanged();
     } finally {
       creatingFollowup = false;
     }
+  }
+
+  // Map signal kinds to friendlier labels. Display only — DB still stores
+  // the raw enum values.
+  const SIGNAL_KIND_LABELS: Record<string, string> = {
+    need: 'Need',
+    offer: 'Offer',
+    status_change: 'Status',
+    commitment: 'Commitment',
+    note: 'Note',
+  };
+  function signalKindLabel(kind: string): string {
+    return SIGNAL_KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
   }
 
   // Group signals under the meeting they came from so the timeline reads
@@ -394,7 +411,7 @@
       <ul class="signals">
         {#each view.recentSignals as s}
           <li class="signal-row">
-            <span class="kind k-{s.kind}">{s.kind.replace('_', ' ')}</span>
+            <span class="kind k-{s.kind}">{signalKindLabel(s.kind)}</span>
             <span class="signal-body">{s.body}</span>
             {#if s.confidence != null}
               <span class="confidence" title="confidence">
@@ -486,31 +503,52 @@
         </ul>
       {/if}
 
-      <!-- Add a new followup inline. -->
-      <div class="followup-new">
-        <input
-          class="new-body"
-          type="text"
-          placeholder="Add a followup…"
-          bind:value={newFollowupBody}
-          onkeydown={(e) => e.key === 'Enter' && createFollowup()}
-          disabled={creatingFollowup}
-        />
-        <input
-          class="new-due"
-          type="date"
-          bind:value={newFollowupDue}
-          disabled={creatingFollowup}
-          aria-label="Due date (optional)"
-        />
-        <button
-          class="btn btn-primary small"
-          onclick={createFollowup}
-          disabled={creatingFollowup || !newFollowupBody.trim()}
-        >
-          {creatingFollowup ? '…' : 'Add'}
-        </button>
-      </div>
+      <!-- Add a new followup. Hidden behind a subtle right-aligned button. -->
+      {#if addingFollowup}
+        <div class="followup-new">
+          <input
+            class="new-body"
+            type="text"
+            placeholder="Add a followup…"
+            bind:value={newFollowupBody}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') createFollowup();
+              if (e.key === 'Escape') {
+                addingFollowup = false;
+                newFollowupBody = '';
+                newFollowupDue = '';
+              }
+            }}
+            disabled={creatingFollowup}
+            autofocus
+          />
+          <input
+            class="new-due"
+            type="date"
+            bind:value={newFollowupDue}
+            disabled={creatingFollowup}
+            aria-label="Due date (optional)"
+          />
+          <button
+            class="btn btn-primary small"
+            onclick={createFollowup}
+            disabled={creatingFollowup || !newFollowupBody.trim()}
+          >
+            {creatingFollowup ? '…' : 'Add'}
+          </button>
+          <button
+            class="btn small"
+            onclick={() => { addingFollowup = false; newFollowupBody = ''; newFollowupDue = ''; }}
+            disabled={creatingFollowup}
+          >Cancel</button>
+        </div>
+      {:else}
+        <div class="followup-add-row">
+          <button class="btn small subtle" onclick={() => (addingFollowup = true)}>
+            + followup
+          </button>
+        </div>
+      {/if}
     {:else}
       {#if view.closedFollowups.length === 0}
         <p class="muted small empty-line">No completed followups yet.</p>
@@ -896,6 +934,20 @@
   }
   .followup-new .new-body { flex: 1; }
   .followup-new .new-due { width: 150px; }
+  .followup-add-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
+  .btn.subtle {
+    background: transparent;
+    color: var(--muted);
+    border: 1px dashed var(--border);
+  }
+  .btn.subtle:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
   @media (max-width: 720px) {
     .followup-new { flex-direction: column; align-items: stretch; }
     .followup-new .new-due { width: 100%; }

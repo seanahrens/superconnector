@@ -77,7 +77,13 @@
 </script>
 
 <button class="scrim" onclick={maybeClose} aria-label="close"></button>
-<div class="modal" role="dialog" aria-modal="true" aria-labelledby="addperson-title">
+<div
+  class="modal"
+  class:submitting
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="addperson-title"
+>
   <header class="hd">
     <h2 id="addperson-title">Add a person</h2>
     <span class="spacer"></span>
@@ -156,6 +162,14 @@
   .actions { display: flex; align-items: center; gap: 8px; }
   .kbd-hint, .status { user-select: none; }
   .status { color: var(--accent); font-weight: 500; }
+  /* Make it obvious the modal is busy: wait cursor everywhere, and the
+     submit button shouldn't keep showing a pointer just because the global
+     .btn rule sets one. */
+  .modal.submitting,
+  .modal.submitting button,
+  .modal.submitting textarea,
+  .modal.submitting input { cursor: wait; }
+  .modal :global(button[disabled]) { cursor: not-allowed; }
 
   .error {
     color: #7a1e1e;

@@ -1557,6 +1557,73 @@ edit in `pages/src/lib/components/PeopleList.svelte`.
 
 ---
 
+## AE. Keyboard shortcuts: add-person, search, person-chat focus
+
+Three shortcuts and their visible affordances:
+
+1. **`A` (or ⌘N) opens the add-person modal.** Show the shortcut on the
+   button itself, e.g. `+ Add person  A` or `⌘N` in a small kbd badge
+   next to the label.
+2. **`/` focuses the people-list search field.** Show the `/` hint inside
+   the input as a right-aligned kbd badge that disappears when focused.
+   Common pattern; users will recognise it.
+3. **`C` focuses the per-person chat composer.** Show the hint as a kbd
+   badge inside the textarea placeholder ("Ask about this person…  `C`").
+   When the chat composer is anchored (see AF), the shortcut works from
+   anywhere on the profile.
+
+Implementation: a single `<svelte:window onkeydown={…}>` in
+`pages/src/routes/+layout.svelte` (or inside each route that needs them).
+Don't fire when the active element is a textarea/input — use
+`event.target.tagName` or `closest('input,textarea')`.
+
+---
+
+## AF. Person chat: anchor composer to viewport bottom; add 'C' shortcut
+
+The per-person chat composer in `PersonProfile.svelte` currently scrolls
+with the rest of the right pane, so on long profiles you have to scroll
+to send a message. Pin the composer to the viewport bottom (or to the
+bottom of the right pane, whichever feels right). Keep the message
+history scrollable in place above it — only the composer is sticky.
+
+Implementation: wrap the chat-pane composer in a `position: sticky;
+bottom: 0; background: var(--bg);` container with a small top shadow
+to separate it from the history. Make the message-history container a
+`flex: 1` overflow-y: auto so it takes the remaining space.
+
+Combine with AE.3 — pressing `C` from anywhere on the profile focuses
+the now-always-visible composer.
+
+---
+
+## AG. Search: top result auto-loads in the right pane
+
+While typing in the people-list search field, debounce ~150ms; whenever
+the filtered list refreshes, if the current right-pane person isn't in
+the results anymore, navigate to the top result automatically.
+`PeopleList.svelte` already emits `onSelect`; the `+page.svelte` (or
++layout.svelte) for the people route can watch the `items` array
+post-filter and call `goto(/people/<top.person_id>)` when the active id
+isn't present.
+
+Edge cases:
+- Empty results → leave the right pane on the previous person (don't
+  navigate to a 404).
+- Don't auto-navigate when the user has manually clicked a row that
+  also matches the search; only navigate when the active person is no
+  longer in the filtered set.
+
+---
+
+## AH. Title-case the global "chat" button
+
+`MasterChatDrawer.svelte` (or wherever the top-bar chat button is)
+currently labels the button `chat ⌘K`. Title-case to `Chat`. One-line
+change.
+
+---
+
 ## Done (recent)
 
 For context — these were resolved in the most recent agent session:

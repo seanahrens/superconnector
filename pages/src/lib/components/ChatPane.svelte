@@ -195,9 +195,9 @@
     white-space: pre-wrap;
   }
   .msg.user .text {
-    background: var(--accent);
-    color: white;
-    border-color: var(--accent);
+    background: #e5e7eb;
+    color: #111;
+    border-color: #d1d5db;
   }
   .tools {
     display: flex;

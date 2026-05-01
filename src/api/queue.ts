@@ -184,6 +184,11 @@ app.post('/:id/resolve', async (c) => {
         updates: import('../lib/extract').ExtractedPersonUpdates;
         summary?: string;
       };
+      // Look up the meeting's actual recorded_at so we don't accidentally
+      // bump last_met_date to today when accepting an extraction.
+      const m = await c.env.DB.prepare(
+        'SELECT recorded_at FROM meetings WHERE id = ?1',
+      ).bind(payload.meeting_id).first<{ recorded_at: string | null }>();
       await applyExtractionResult(c.env, {
         personId: payload.person_id,
         meetingId: payload.meeting_id,
@@ -195,6 +200,10 @@ app.post('/:id/resolve', async (c) => {
           summary: payload.summary ?? '',
           extraction_confidence: 1.0,
         },
+        meetingRecordedAt: m?.recorded_at ?? null,
+        // Reviewing an extraction for an already-counted meeting — don't
+        // re-bump meeting_count.
+        reprocess: true,
       });
       await c.env.DB.prepare(`UPDATE confirmation_queue SET status = 'resolved' WHERE id = ?1`).bind(id).run();
       return c.json({ ok: true });

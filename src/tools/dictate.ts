@@ -61,7 +61,13 @@ export const dictateTool: Tool<Input, Output> = {
       source: input.source,
       transcript: input.text,
     });
-    await applyExtractionResult(env, { personId: r.personId, meetingId, result });
+    // Manual dictation has no separate meeting time — `now` is correct here.
+    await applyExtractionResult(env, {
+      personId: r.personId,
+      meetingId,
+      result,
+      meetingRecordedAt: now,
+    });
 
     return {
       person_id: r.personId,

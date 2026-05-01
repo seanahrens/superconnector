@@ -153,6 +153,7 @@ export async function materializeFromGranolaNote(
     personId,
     meetingId,
     result,
+    meetingRecordedAt: note.created_at,
     mePersonId: me?.id ?? null,
   });
   return { meetingId, personId, reused: false };

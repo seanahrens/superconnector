@@ -55,7 +55,7 @@
     <span class="spacer"></span>
     <button class="btn chat-btn" onclick={toggleChat} title="Master chat (⌘K)" aria-label="Open master chat">
       <Icon name="message-square" size={16} />
-      <span class="chat-label">chat</span>
+      <span class="chat-label">Chat</span>
       <span class="kbd">⌘K</span>
     </button>
   </header>

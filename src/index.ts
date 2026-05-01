@@ -97,6 +97,112 @@ app.post('/api/admin/cleanup-phantoms', requireAuth, async (c) => {
   return c.json({ deleted: ids.length });
 });
 
+// Admin: recompute last_met_date and meeting_count for every person from
+// the meetings table. Use to repair people whose last_met_date was set to
+// the ingest time instead of the actual meeting time (pre-W fix).
+app.post('/api/admin/backfill-last-met', requireAuth, async (c) => {
+  const r = await c.env.DB.prepare(
+    `UPDATE people SET
+       last_met_date = (
+         SELECT substr(MAX(recorded_at), 1, 10)
+         FROM meetings WHERE meetings.person_id = people.id
+       ),
+       meeting_count = (
+         SELECT COUNT(*) FROM meetings WHERE meetings.person_id = people.id
+       ),
+       updated_at = ?1`,
+  ).bind(new Date().toISOString()).run();
+  return c.json({ ok: true, rows_updated: r.meta.changes ?? 0 });
+});
+
+// Admin: replace underscores with spaces (and lowercase) across every tag /
+// trajectory_tag / role / tag_proposal in the DB. Idempotent. Run after the
+// V fix to clean up historical data.
+app.post('/api/admin/normalize-tags', requireAuth, async (c) => {
+  const { normalizeTagName } = await import('./lib/tag_norm');
+  const { parseJsonArray } = await import('./lib/db');
+
+  let tagsRenamed = 0;
+  let tagsMerged = 0;
+  let proposalsRenamed = 0;
+  let peopleArraysFixed = 0;
+
+  // 1. tags table — rename, merge duplicates by canonical name.
+  const tags = await c.env.DB.prepare('SELECT id, name FROM tags').all<{ id: string; name: string }>();
+  const byCanonical = new Map<string, { id: string; name: string }[]>();
+  for (const t of tags.results ?? []) {
+    const canon = normalizeTagName(t.name);
+    if (!byCanonical.has(canon)) byCanonical.set(canon, []);
+    byCanonical.get(canon)!.push(t);
+  }
+  for (const [canon, group] of byCanonical) {
+    if (group.length === 1) {
+      if (group[0]!.name !== canon) {
+        await c.env.DB.prepare('UPDATE tags SET name = ?1 WHERE id = ?2').bind(canon, group[0]!.id).run();
+        tagsRenamed++;
+      }
+      continue;
+    }
+    // Multiple rows collapse to one canonical name. Keep the oldest, repoint
+    // person_tags, delete the rest.
+    const [keep, ...drop] = group;
+    if (keep!.name !== canon) {
+      await c.env.DB.prepare('UPDATE tags SET name = ?1 WHERE id = ?2').bind(canon, keep!.id).run();
+      tagsRenamed++;
+    }
+    for (const d of drop) {
+      // Move person_tags rows to the kept tag, ignoring rows that would
+      // collide (person already has the canonical tag).
+      await c.env.DB.prepare(
+        `UPDATE OR IGNORE person_tags SET tag_id = ?1 WHERE tag_id = ?2`,
+      ).bind(keep!.id, d.id).run();
+      await c.env.DB.prepare('DELETE FROM person_tags WHERE tag_id = ?1').bind(d.id).run();
+      await c.env.DB.prepare('DELETE FROM tags WHERE id = ?1').bind(d.id).run();
+      tagsMerged++;
+    }
+  }
+
+  // 2. tag_proposals — normalize proposed_name in place.
+  const props = await c.env.DB.prepare(
+    'SELECT id, proposed_name FROM tag_proposals',
+  ).all<{ id: string; proposed_name: string }>();
+  for (const p of props.results ?? []) {
+    const canon = normalizeTagName(p.proposed_name);
+    if (canon !== p.proposed_name) {
+      await c.env.DB.prepare(
+        'UPDATE tag_proposals SET proposed_name = ?1 WHERE id = ?2',
+      ).bind(canon, p.id).run();
+      proposalsRenamed++;
+    }
+  }
+
+  // 3. people.trajectory_tags + people.roles — normalize JSON arrays in place.
+  const people = await c.env.DB.prepare(
+    'SELECT id, trajectory_tags, roles FROM people',
+  ).all<{ id: string; trajectory_tags: string | null; roles: string | null }>();
+  for (const p of people.results ?? []) {
+    const oldTraj = parseJsonArray(p.trajectory_tags);
+    const oldRoles = parseJsonArray(p.roles);
+    const newTraj = [...new Set(oldTraj.map(normalizeTagName).filter(Boolean))];
+    const newRoles = [...new Set(oldRoles.map(normalizeTagName).filter(Boolean))];
+    const trajChanged = JSON.stringify(oldTraj) !== JSON.stringify(newTraj);
+    const rolesChanged = JSON.stringify(oldRoles) !== JSON.stringify(newRoles);
+    if (trajChanged || rolesChanged) {
+      await c.env.DB.prepare(
+        'UPDATE people SET trajectory_tags = ?1, roles = ?2 WHERE id = ?3',
+      ).bind(JSON.stringify(newTraj), JSON.stringify(newRoles), p.id).run();
+      peopleArraysFixed++;
+    }
+  }
+
+  return c.json({
+    tags_renamed: tagsRenamed,
+    tags_merged: tagsMerged,
+    proposals_renamed: proposalsRenamed,
+    people_arrays_fixed: peopleArraysFixed,
+  });
+});
+
 // Admin: dismiss every pending queue item. Use after a logic change makes the
 // existing pending items stale.
 app.post('/api/admin/clear-queue', requireAuth, async (c) => {

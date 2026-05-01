@@ -64,11 +64,6 @@
             {p.display_name ?? p.email ?? '(unknown)'}
             {#if p.roles.length}<span class="badge">{p.roles[0]}</span>{/if}
           </div>
-          <div class="sub small muted">
-            {p.last_met_date ?? '—'}
-            <span> · {p.meeting_count} mtg{p.meeting_count === 1 ? '' : 's'}</span>
-            {#if p.tags.length}<span> · {p.tags.slice(0, 3).join(', ')}</span>{/if}
-          </div>
         </div>
       </button>
     {/each}
