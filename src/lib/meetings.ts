@@ -4,6 +4,7 @@
 // list correct in one place.
 
 import type { Env } from '../../worker-configuration';
+import type { AttendeeRef } from './db';
 import { nowIso } from './ulid';
 
 export interface MeetingInsert {
@@ -17,7 +18,7 @@ export interface MeetingInsert {
   eventTitle?: string | null;
   eventStart?: string | null;
   eventEnd?: string | null;
-  attendees: Array<{ email: string | null; name: string | null }>;
+  attendees: AttendeeRef[];
   transcript: string | null;
   summary: string | null;
   classification: string;
@@ -59,7 +60,7 @@ export interface MeetingUpdate {
   eventTitle: string | null;
   eventStart: string | null;
   eventEnd: string | null;
-  attendees: Array<{ email: string | null; name: string | null }>;
+  attendees: AttendeeRef[];
   transcript: string | null;
   summary: string | null;
   classification: string;

@@ -1,9 +1,18 @@
-// Low-level people-table writes shared by `lib/resolve.ts` (creates new
-// people during fuzzy resolution) and `lib/me.ts` (cold-start of the
-// "Me" row).
+// Low-level people-table reads and writes. Used by resolve.ts (fuzzy
+// resolution + new-row creation), me.ts (cold-start of the "Me" row),
+// and most modules that need to load a single person by id.
 
 import type { Env } from '../../worker-configuration';
+import type { PersonRow } from './db';
 import { ulid, nowIso } from './ulid';
+
+/** Load one person row by id. Returns null if not found. The canonical
+ *  one-line replacement for `SELECT * FROM people WHERE id = ?1`. */
+export async function getPersonById(env: Env, id: string): Promise<PersonRow | null> {
+  return await env.DB.prepare('SELECT * FROM people WHERE id = ?1')
+    .bind(id)
+    .first<PersonRow>();
+}
 
 export interface CreatePersonOptions {
   email?: string | null;

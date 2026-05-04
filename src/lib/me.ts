@@ -9,7 +9,7 @@
 
 import type { Env } from '../../worker-configuration';
 import type { PersonRow } from './db';
-import { createPerson } from './people_repo';
+import { createPerson, getPersonById } from './people_repo';
 import { nowIso } from './ulid';
 
 export async function findMePersonId(env: Env): Promise<string | null> {
@@ -27,7 +27,7 @@ export async function findMePerson(env: Env): Promise<PersonRow | null> {
   if (row) return row;
   const id = await healFromEmail(env);
   if (!id) return null;
-  return await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(id).first<PersonRow>();
+  return await getPersonById(env, id);
 }
 
 export async function ensureMePerson(env: Env, fallbackName?: string | null): Promise<string | null> {

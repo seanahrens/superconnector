@@ -1,4 +1,5 @@
 import type { Env } from '../../worker-configuration';
+import type { AttendeeRef } from './db';
 import type { IcsEvent } from './ics';
 import type { GranolaTranscriptTurn } from './granola';
 import { cached, jsonCall, MODEL_HAIKU } from './anthropic';
@@ -26,7 +27,7 @@ export interface ClassifyInput {
   noteTitle: string | null;
   noteSummary: string | null;
   eventTitle?: string | null;
-  attendees?: Array<{ email: string | null; name: string | null }>;
+  attendees?: AttendeeRef[];
 }
 
 export interface ClassifyResult {
@@ -229,7 +230,7 @@ export interface VoteInput {
   noteSummary?: string | null;
   ownerName?: string | null;
   transcriptTurns?: GranolaTranscriptTurn[] | null;
-  attendees?: Array<{ email: string | null; name: string | null }>;
+  attendees?: AttendeeRef[];
 }
 
 // Combine the three signals (title, speaker count, ICS attendees) into a

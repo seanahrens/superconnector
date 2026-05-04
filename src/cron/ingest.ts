@@ -11,6 +11,7 @@ import {
   isFutureEventNote,
   noteContentHash,
 } from '../lib/granola';
+import type { AttendeeRef } from '../lib/db';
 import { fetchIcs, eventsAround, type IcsEvent } from '../lib/ics';
 import { classifyMeeting, bestEventForNote, voteClassification } from '../lib/classify';
 import { resolvePerson } from '../lib/resolve';
@@ -111,7 +112,7 @@ export async function runIngest(
 type ProcessOutcome = 'processed' | 'reprocessed' | 'skipped';
 
 interface ResolvedAttendees {
-  attendees: Array<{ email: string | null; name: string | null }>;
+  attendees: AttendeeRef[];
   eventTitle: string | null;
   eventStart: string | null;
   eventEnd: string | null;
@@ -365,7 +366,7 @@ async function processNote(
 interface PersistMeetingArgs {
   note: GranolaNote;
   personId: string;
-  attendees: Array<{ email: string | null; name: string | null }>;
+  attendees: AttendeeRef[];
   eventTitle: string | null;
   eventStart: string | null;
   eventEnd: string | null;

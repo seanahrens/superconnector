@@ -5,7 +5,7 @@
 import type { Env } from '../../worker-configuration';
 import { jsonCall, MODEL_SONNET, cached } from '../lib/anthropic';
 import type { PersonRow } from '../lib/db';
-import { parseJsonArray } from '../lib/db';
+import { parseJsonArray, sqlPlaceholders } from '../lib/db';
 import { querySimilarPeople } from '../lib/embed';
 import { loadPersonView, summarizePersonForPrompt } from '../lib/person_view';
 import { getRolePack } from '../lib/role_packs';
@@ -58,9 +58,8 @@ export async function findMatches(
   if (pool.length === 0) return [];
 
   const ids = pool.map((p) => p.personId);
-  const placeholders = ids.map((_, i) => `?${i + 1}`).join(',');
   const candidates = await env.DB.prepare(
-    `SELECT * FROM people WHERE id IN (${placeholders})`,
+    `SELECT * FROM people WHERE id IN (${sqlPlaceholders(ids)})`,
   ).bind(...ids).all<PersonRow>();
 
   const filtered = (candidates.results ?? []).filter((p) => {

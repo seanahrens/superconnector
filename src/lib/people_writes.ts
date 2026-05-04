@@ -10,6 +10,7 @@ import { parseJsonArray, parseJsonObject, mergeStringArray } from './db';
 import { upsertPersonVector } from './embed';
 import { normalizeTagName, normalizeTagArray } from './tag_norm';
 import { enqueueConfirmation } from './queue';
+import { getPersonById } from './people_repo';
 import { ulid, nowIso } from './ulid';
 
 const HIGH_CONFIDENCE = 0.7;
@@ -47,7 +48,7 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
   // caller didn't supply one (manual dictation with no timestamp).
   const metDate = (meetingRecordedAt ?? now).slice(0, 10);
 
-  const person = await loadPerson(env, personId);
+  const person = await getPersonById(env, personId);
   if (!person) throw new Error(`person not found: ${personId}`);
 
   const updates = result.person_updates;
@@ -143,7 +144,7 @@ async function applySelfUpdates(
   lowConfidence: boolean,
   now: string,
 ): Promise<void> {
-  const me = await loadPerson(env, meId);
+  const me = await getPersonById(env, meId);
   if (!me) return;
 
   if (updates && !lowConfidence) {
@@ -164,10 +165,6 @@ async function applySelfUpdates(
 
 // ---------------------------------------------------------------------------
 // Field-merge helpers shared by the counterpart and self-update paths.
-
-async function loadPerson(env: Env, id: string): Promise<PersonRow | null> {
-  return await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(id).first<PersonRow>();
-}
 
 async function touchPersonUpdatedAt(env: Env, id: string, now: string): Promise<void> {
   await env.DB.prepare(

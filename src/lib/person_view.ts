@@ -4,6 +4,7 @@
 import type { Env } from '../../worker-configuration';
 import type { PersonRow, MeetingRow, SignalRow, FollowupRow } from './db';
 import { parseJsonArray, parseJsonObject } from './db';
+import { getPersonById } from './people_repo';
 
 export interface PersonView {
   person: PersonRow;
@@ -23,7 +24,7 @@ export async function loadPersonView(
   personId: string,
   options: { meetingsLimit?: number; signalsLimit?: number } = {},
 ): Promise<PersonView | null> {
-  const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(personId).first<PersonRow>();
+  const person = await getPersonById(env, personId);
   if (!person) return null;
 
   const tagsRes = await env.DB.prepare(

@@ -1,4 +1,5 @@
 import type { Env } from '../../worker-configuration';
+import { sqlPlaceholders } from './db';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5'; // 768-dim
 const VECTOR_DIM = 768;
@@ -51,9 +52,8 @@ export async function querySimilarPeople(
   const filtered = raw.filter((m) => m.personId !== excludePersonId);
   if (filtered.length === 0) return filtered;
   // Drop the user's own row — they're never a candidate to introduce themselves to.
-  const placeholders = filtered.map((_, i) => `?${i + 1}`).join(',');
   const meRows = await env.DB.prepare(
-    `SELECT id FROM people WHERE id IN (${placeholders}) AND degree = 0`,
+    `SELECT id FROM people WHERE id IN (${sqlPlaceholders(filtered)}) AND degree = 0`,
   ).bind(...filtered.map((f) => f.personId)).all<{ id: string }>();
   const meIds = new Set((meRows.results ?? []).map((r) => r.id));
   return filtered.filter((m) => !meIds.has(m.personId)).slice(0, topK);

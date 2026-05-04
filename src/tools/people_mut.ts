@@ -6,7 +6,7 @@ import type { Tool } from './types';
 import { resolvePerson } from '../lib/resolve';
 import { upsertPersonVector } from '../lib/embed';
 import { nowIso } from '../lib/ulid';
-import type { PersonRow } from '../lib/db';
+import { getPersonById } from '../lib/people_repo';
 import { parseJsonArray, parseJsonObject, mergeStringArray } from '../lib/db';
 import { normalizeTagArray } from '../lib/tag_norm';
 
@@ -40,7 +40,7 @@ export const addPersonTool: Tool<AddInput, { person_id: string; created: boolean
   async handler(env, input) {
     const r = await resolvePerson(env, { email: input.email, name: input.name });
     if (input.initial_context || input.roles || input.degree !== undefined) {
-      const existing = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(r.personId).first<PersonRow>();
+      const existing = await getPersonById(env, r.personId);
       if (existing) {
         const newRoles = mergeStringArray(parseJsonArray(existing.roles), normalizeTagArray(input.roles));
         const newContext = existing.context_manual_override
@@ -117,7 +117,7 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     additionalProperties: false,
   },
   async handler(env, input) {
-    const existing = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(input.person_id).first<PersonRow>();
+    const existing = await getPersonById(env, input.person_id);
     if (!existing) throw new Error('person not found');
 
     const newDisplayName = input.display_name ?? existing.display_name;

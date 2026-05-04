@@ -5,7 +5,7 @@ import { resolvePerson } from '../lib/resolve';
 import { applyExtractionResult } from '../lib/people_writes';
 import { materializeFromGranolaNote } from '../lib/queue_resolve';
 import { enqueueConfirmation, setQueueStatus } from '../lib/queue';
-import type { ConfirmationQueueRow } from '../lib/db';
+import type { AttendeeRef, ConfirmationQueueRow } from '../lib/db';
 import { asJson } from './errors';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -95,7 +95,7 @@ app.post('/:id/resolve', asJson<{ Bindings: Env }>(async (c) => {
   if (item.kind === 'meeting_classification') {
     const payload = JSON.parse(item.payload) as {
       note: { id: string; title?: string | null };
-      attendees?: Array<{ email: string | null; name: string | null }>;
+      attendees?: AttendeeRef[];
     };
     const cls = body.classification ?? '1:1';
     // Group meetings still skip ingestion — just record the decision.

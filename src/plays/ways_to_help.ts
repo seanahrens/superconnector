@@ -5,7 +5,7 @@
 import type { Env } from '../../worker-configuration';
 import { jsonCall, MODEL_SONNET, cached } from '../lib/anthropic';
 import type { PersonRow } from '../lib/db';
-import { parseJsonArray } from '../lib/db';
+import { parseJsonArray, sqlPlaceholders } from '../lib/db';
 import { querySimilarPeople } from '../lib/embed';
 
 const RANK_SYSTEM = `You select the highest-leverage "ways to help" actions for You today. You are the sole CRM owner (degree=0). Address You as "You" in any prose; never say "the user".
@@ -67,8 +67,7 @@ export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHel
     const matches = await querySimilarPeople(env, text, 5, seed.id);
     if (matches.length === 0) continue;
     const ids = matches.map((m) => m.personId);
-    const placeholders = ids.map((_, i) => `?${i + 1}`).join(',');
-    const rows = await env.DB.prepare(`SELECT * FROM people WHERE id IN (${placeholders})`).bind(...ids).all<PersonRow>();
+    const rows = await env.DB.prepare(`SELECT * FROM people WHERE id IN (${sqlPlaceholders(ids)})`).bind(...ids).all<PersonRow>();
     for (const row of rows.results ?? []) {
       // querySimilarPeople already filters degree=0, but defend in depth.
       if (row.degree === 0) continue;

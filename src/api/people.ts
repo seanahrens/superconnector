@@ -4,7 +4,8 @@
 import { Hono } from 'hono';
 import type { Env } from '../../worker-configuration';
 import type { PersonRow } from '../lib/db';
-import { parseJsonArray } from '../lib/db';
+import { parseJsonArray, sqlPlaceholders } from '../lib/db';
+import type { PersonListItem } from '../lib/api_types';
 import { loadPersonView } from '../lib/person_view';
 import { sortScore } from '../lib/sort_score';
 import { between } from '../lib/lexorank';
@@ -15,19 +16,6 @@ import { resolveAndCacheAvatar } from '../lib/avatars';
 import { findMePersonId } from '../lib/me';
 
 const app = new Hono<{ Bindings: Env }>();
-
-interface ListItem {
-  person_id: string;
-  display_name: string | null;
-  email: string | null;
-  roles: string[];
-  trajectory_tags: string[];
-  tags: string[];
-  last_met_date: string | null;
-  meeting_count: number;
-  custom_sort_position: string | null;
-  degree: number;
-}
 
 app.get('/', async (c) => {
   const url = new URL(c.req.url);
@@ -52,7 +40,7 @@ app.get('/', async (c) => {
   const rows = all.results ?? [];
 
   // Pre-fetch tag names per person if any tag filter or we want to return tags.
-  const personTagMap = await loadTagsForPeople(c.env, rows.map((r) => r.id));
+  const personTagMap = await loadPersonTagMap(c.env, rows.map((r) => r.id));
 
   // Hide phantom rows (no name, no email, zero meetings) from the list view.
   // They can still be accessed by direct id if needed.
@@ -125,7 +113,7 @@ app.get('/', async (c) => {
     );
   });
 
-  const items: ListItem[] = filtered.slice(0, limit).map((p) => ({
+  const items: PersonListItem[] = filtered.slice(0, limit).map((p) => ({
     person_id: p.id,
     display_name: p.display_name,
     email: p.primary_email,
@@ -274,13 +262,15 @@ app.post('/:id/merge', async (c) => {
   }
 });
 
-async function loadTagsForPeople(env: Env, ids: string[]): Promise<Map<string, string[]>> {
+/** Look up tag names for a batch of people. The Map's value preserves the
+ *  database row order (no stable sort guarantee, but consistent within
+ *  a single query). */
+async function loadPersonTagMap(env: Env, ids: string[]): Promise<Map<string, string[]>> {
   if (ids.length === 0) return new Map();
-  const placeholders = ids.map((_, i) => `?${i + 1}`).join(',');
   const rows = await env.DB.prepare(
     `SELECT pt.person_id, t.name FROM person_tags pt
      JOIN tags t ON t.id = pt.tag_id
-     WHERE pt.person_id IN (${placeholders})`,
+     WHERE pt.person_id IN (${sqlPlaceholders(ids)})`,
   ).bind(...ids).all<{ person_id: string; name: string }>();
   const map = new Map<string, string[]>();
   for (const row of rows.results ?? []) {

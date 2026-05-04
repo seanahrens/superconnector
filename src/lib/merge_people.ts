@@ -13,6 +13,7 @@ import type { PersonRow } from './db';
 import { parseJsonArray, parseJsonObject, uniqStrings } from './db';
 import { jsonCall, MODEL_HAIKU, cached } from './anthropic';
 import { upsertPersonVector } from './embed';
+import { getPersonById } from './people_repo';
 import { nowIso } from './ulid';
 
 export interface CandidateScore {
@@ -28,7 +29,7 @@ export async function rankMergeCandidates(
   env: Env,
   targetId: string,
 ): Promise<CandidateScore[]> {
-  const target = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(targetId).first<PersonRow>();
+  const target = await getPersonById(env, targetId);
   if (!target) return [];
 
   const allRes = await env.DB.prepare('SELECT * FROM people WHERE id != ?1').bind(targetId).all<PersonRow>();
@@ -205,8 +206,8 @@ export async function mergePeople(
 ): Promise<MergeResult> {
   if (keptId === donorId) throw new Error('cannot merge a person into themselves');
 
-  const keep = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(keptId).first<PersonRow>();
-  const donor = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(donorId).first<PersonRow>();
+  const keep = await getPersonById(env, keptId);
+  const donor = await getPersonById(env, donorId);
   if (!keep || !donor) throw new Error('keep or donor person not found');
 
   // Reparent dependent rows. Uses a batch so any failure rolls back together.

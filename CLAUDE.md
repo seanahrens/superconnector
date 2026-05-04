@@ -57,8 +57,9 @@ docs/                   GOTCHAS.md, TODOS.md
 
 | Module | Responsibility |
 |---|---|
-| `lib/db.ts`              | D1 row types + `parseJsonArray`, `parseJsonObject`, `mergeStringArray`, `uniqStrings` |
-| `lib/people_repo.ts`     | `createPerson` — full INSERT for the `people` table; shared by resolve.ts and me.ts |
+| `lib/db.ts`              | D1 row types (`PersonRow`, `MeetingRow`, …) + `AttendeeRef` + JSON-column helpers (`parseJsonArray`, `parseJsonObject`, `mergeStringArray`, `uniqStrings`) + `sqlPlaceholders` for `IN (…)` clauses |
+| `lib/api_types.ts`       | Worker → Pages JSON shapes (`PersonListItem`). Pages mirrors these in `pages/src/lib/types.ts` — edit both when adding fields |
+| `lib/people_repo.ts`     | `getPersonById` (canonical one-line `SELECT *` lookup) + `createPerson` (the full INSERT) |
 | `lib/me.ts`              | `findMePerson`, `ensureMePerson` — the user's own row (matched by EMAIL_TO) |
 | `lib/resolve.ts`         | Email-then-fuzzy person resolution; creates new rows via `createPerson` |
 | `lib/meetings.ts`        | `insertMeeting`, `updateMeetingFromNote`, `findMeetingBySourceRef`, `recomputePersonMeetingStats` |
@@ -167,16 +168,22 @@ the same means nothing was uploaded).
 The codebase had several near-identical SQL blocks copy-pasted across call
 sites; these are now shared helpers. Use them, don't re-inline the SQL.
 
+- Loading one person by id → `getPersonById(env, id)` from
+  `lib/people_repo.ts`. Replaces `SELECT * FROM people WHERE id = ?1`.
+- Creating a person row → `createPerson` from `lib/people_repo.ts`.
 - Inserting a meeting → `insertMeeting` from `lib/meetings.ts` (also
   `updateMeetingFromNote`, `findMeetingBySourceRef`,
   `recomputePersonMeetingStats`).
 - Inserting a confirmation_queue row → `enqueueConfirmation` from
   `lib/queue.ts` (also `hasPendingForNote`, `setQueueStatus`).
-- Creating a person row → `createPerson` from `lib/people_repo.ts`.
 - Loading the "person view" the extractor needs → `loadExtractionContext` /
   `loadExtractionPeerContext` from `lib/extraction_context.ts`.
 - Merging two string lists / deduping → `mergeStringArray` / `uniqStrings`
   from `lib/db.ts`.
+- Building a `?1,?2,…?N` placeholder string for SQL `IN (…)` clauses →
+  `sqlPlaceholders(ids)` from `lib/db.ts`. Pair with `.bind(...ids)`.
+- The attendee shape passed through ingest/classify/queue → `AttendeeRef`
+  from `lib/db.ts`. Don't re-spell `Array<{email, name}>` inline.
 - Wrapping a Hono route so thrown errors become JSON 500s →
   `asJson(...)` from `api/errors.ts`. Hono routes that need to fail in
   one specific way still return `c.json({error}, 4xx)` directly.

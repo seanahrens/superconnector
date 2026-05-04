@@ -1,4 +1,6 @@
-// Mirror of the Worker API's JSON shapes.
+// Mirror of the Worker API's JSON shapes. Keep `PersonListItem` in sync
+// with `src/lib/api_types.ts` — Worker and Pages bundles can't share a
+// module at build time, so neither tsc nor svelte-check will catch drift.
 
 export interface PersonListItem {
   person_id: string;

@@ -1,6 +1,6 @@
 import type { Tool } from './types';
 import type { PersonRow } from '../lib/db';
-import { parseJsonArray } from '../lib/db';
+import { parseJsonArray, sqlPlaceholders } from '../lib/db';
 import { querySimilarPeople } from '../lib/embed';
 
 interface Input {
@@ -54,9 +54,8 @@ export const searchPeople: Tool<Input, Output> = {
       const matches = await querySimilarPeople(env, trimmedQuery, limit);
       const ids = matches.map((m) => m.personId);
       if (ids.length === 0) return { matches: [] };
-      const placeholders = ids.map((_, i) => `?${i + 1}`).join(',');
       const rows = await env.DB.prepare(
-        `SELECT * FROM people WHERE id IN (${placeholders})`,
+        `SELECT * FROM people WHERE id IN (${sqlPlaceholders(ids)})`,
       ).bind(...ids).all<PersonRow>();
       const kept = dropMe(rows.results ?? []);
       const byId = new Map(kept.map((r) => [r.id, r]));

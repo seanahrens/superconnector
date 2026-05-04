@@ -103,6 +103,14 @@ export interface ChatMessageRow {
   created_at: string;
 }
 
+/** Lightweight attendee shape passed around the ingest + classify + queue
+ *  paths. Keep this in sync with the JSON we serialize into meetings.attendees
+ *  and the queue payload. */
+export interface AttendeeRef {
+  email: string | null;
+  name: string | null;
+}
+
 export function parseJsonArray(s: string | null): string[] {
   if (!s) return [];
   try {
@@ -139,4 +147,11 @@ export function mergeStringArray(
 /** Dedupe while preserving order. Drops empty strings. */
 export function uniqStrings(xs: string[]): string[] {
   return [...new Set(xs.filter(Boolean))];
+}
+
+/** Build a `?1,?2,?3,…?N` placeholder string for SQL `IN (...)` clauses.
+ *  Use with `.bind(...ids)`. Empty input returns the empty string — the
+ *  caller is responsible for short-circuiting before composing the SQL. */
+export function sqlPlaceholders(ids: ReadonlyArray<unknown>): string {
+  return ids.map((_, i) => `?${i + 1}`).join(',');
 }
