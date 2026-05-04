@@ -247,19 +247,25 @@
   }
 </script>
 
-<div class="profile" class:has-band={degreeLabel(view.person.degree) != null}>
-  {#if degreeLabel(view.person.degree)}
-    <div
-      class="corner-band"
-      class:band-you={view.person.degree === 0}
-      class:band-distant={view.person.degree === 2}
-      aria-label="Connection degree: {degreeLabel(view.person.degree)}"
-    >
-      {degreeLabel(view.person.degree)}
-    </div>
-  {/if}
+<div class="profile">
   <!-- ======================================================== HEADER -->
   <header class="hero">
+    {#if degreeLabel(view.person.degree)}
+      <!-- Corner ribbon, clipped to the hero card's top-left corner via a
+           mask wrapper with overflow:hidden + matching border-radius. The
+           band's two ends visually terminate inside the card so it reads
+           as wrapping the corner, not floating off the edge. -->
+      <div class="ribbon-mask" aria-hidden="true">
+        <div
+          class="corner-band"
+          class:band-you={view.person.degree === 0}
+          class:band-distant={view.person.degree === 2}
+        >
+          {degreeLabel(view.person.degree)}
+        </div>
+      </div>
+      <span class="sr-only">Connection degree: {degreeLabel(view.person.degree)}</span>
+    {/if}
     <PersonAvatar
       personId={view.person.id}
       name={view.person.display_name}
@@ -781,30 +787,55 @@
     flex-direction: column;
     gap: 16px;
     max-width: 920px;
-    position: relative;
   }
-  /* Corner ribbon for non-default connection degree. Positioned absolutely
-     over the upper-right of the profile; cropped diagonally so it reads as
-     a true corner band. degree=0 → indigo "You"; degree=2 → amber
-     "Distant". degree=1 (default) renders nothing. */
+  /* Corner ribbon for non-default connection degree. The mask is a
+     square overlay anchored to the hero card's TOP-LEFT corner. It uses
+     overflow:hidden + a matching border-top-left-radius so the band's
+     ends are cleanly clipped at the card's edges, giving the
+     "wrapped around the corner" look instead of a floating diagonal.
+     degree=0 → indigo "You"; degree=2 → amber "Distant"; degree=1
+     renders nothing. */
+  .ribbon-mask {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 110px;
+    height: 110px;
+    overflow: hidden;
+    border-top-left-radius: 12px; /* match .hero radius */
+    pointer-events: none;
+    z-index: 2;
+  }
   .corner-band {
     position: absolute;
-    top: 14px;
-    right: -34px;
-    transform: rotate(35deg);
+    top: 24px;
+    left: -40px;
+    width: 160px;
+    text-align: center;
+    transform: rotate(-45deg);
     transform-origin: center;
-    padding: 4px 40px;
+    padding: 4px 0;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: white;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    pointer-events: none;
-    z-index: 2;
   }
   .band-you { background: var(--accent); }
   .band-distant { background: #d97706; } /* amber */
+  /* Visually-hidden helper for screen readers (the mask is aria-hidden). */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
   /* Degree-edit row in editingHeader mode. Indents off the meta line
      enough to feel like a separate control, not another stat cell. */
@@ -818,6 +849,7 @@
 
   /* ──────────────────────────────────────────── hero */
   .hero {
+    position: relative; /* anchors .ribbon-mask */
     display: flex;
     gap: 16px;
     align-items: flex-start;
