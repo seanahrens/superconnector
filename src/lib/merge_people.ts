@@ -10,7 +10,7 @@
 
 import type { Env } from '../../worker-configuration';
 import type { PersonRow } from './db';
-import { parseJsonArray, parseJsonObject } from './db';
+import { parseJsonArray, parseJsonObject, uniqStrings } from './db';
 import { jsonCall, MODEL_HAIKU, cached } from './anthropic';
 import { upsertPersonVector } from './embed';
 import { nowIso } from './ulid';
@@ -243,18 +243,18 @@ export async function mergePeople(
   }
 
   // Normalize / safety: don't let the LLM nuke fields the locals had.
-  const finalAliases = uniq([
+  const finalAliases = uniqStrings([
     ...parseJsonArray(keep.aliases),
     ...parseJsonArray(donor.aliases),
     ...(merged.aliases ?? []),
     ...(donor.display_name && donor.display_name !== merged.display_name ? [donor.display_name] : []),
   ]);
-  const finalRoles = uniq([
+  const finalRoles = uniqStrings([
     ...(merged.roles ?? []),
     ...parseJsonArray(keep.roles),
     ...parseJsonArray(donor.roles),
   ]);
-  const finalTraj = uniq([
+  const finalTraj = uniqStrings([
     ...(merged.trajectory_tags ?? []),
     ...parseJsonArray(keep.trajectory_tags),
     ...parseJsonArray(donor.trajectory_tags),
@@ -356,12 +356,12 @@ function localMerge(keep: PersonRow, donor: PersonRow): MergedFields {
       : longer(keep.context, donor.context),
     needs: longer(keep.needs, donor.needs),
     offers: longer(keep.offers, donor.offers),
-    roles: uniq([...parseJsonArray(keep.roles), ...parseJsonArray(donor.roles)]),
-    trajectory_tags: uniq([
+    roles: uniqStrings([...parseJsonArray(keep.roles), ...parseJsonArray(donor.roles)]),
+    trajectory_tags: uniqStrings([
       ...parseJsonArray(keep.trajectory_tags),
       ...parseJsonArray(donor.trajectory_tags),
     ]),
-    aliases: uniq([
+    aliases: uniqStrings([
       ...parseJsonArray(keep.aliases),
       ...parseJsonArray(donor.aliases),
     ]),
@@ -376,10 +376,6 @@ function longer(a: string | null | undefined, b: string | null | undefined): str
   if (!av && !bv) return null;
   if (av.length >= bv.length) return av || null;
   return bv || null;
-}
-
-function uniq(xs: string[]): string[] {
-  return [...new Set(xs.filter(Boolean))];
 }
 
 function pickLatestDate(...dates: Array<string | null | undefined>): string | null {

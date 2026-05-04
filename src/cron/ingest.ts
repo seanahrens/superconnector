@@ -16,9 +16,12 @@ import { classifyMeeting, bestEventForNote, voteClassification } from '../lib/cl
 import { resolvePerson } from '../lib/resolve';
 import { extractFromMeeting } from '../lib/extract';
 import { applyExtractionResult } from '../lib/people_writes';
-import { findMePerson, ensureMePerson } from '../lib/me';
+import { ensureMePerson } from '../lib/me';
 import { materializeFromGranolaNote } from '../lib/queue_resolve';
 import { recordDisposition, type Disposition } from '../lib/ingest_log';
+import { enqueueConfirmation, hasPendingForNote, type QueueKind } from '../lib/queue';
+import { insertMeeting, updateMeetingFromNote } from '../lib/meetings';
+import { loadExtractionPeerContext } from '../lib/extraction_context';
 import { ulid, nowIso } from '../lib/ulid';
 
 const SOURCE = 'granola';
@@ -107,18 +110,88 @@ export async function runIngest(
 
 type ProcessOutcome = 'processed' | 'reprocessed' | 'skipped';
 
-// Returns true when a pending queue row already exists for this note +
-// kind. Lets us skip a redundant INSERT instead of relying solely on the
-// unique index (which would error and abort the whole transaction).
-async function isAlreadyQueued(env: Env, kind: string, noteId: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    `SELECT 1 FROM confirmation_queue
-      WHERE kind = ?1
-        AND json_extract(payload, '$.note.id') = ?2
-        AND status = 'pending'
-      LIMIT 1`,
-  ).bind(kind, noteId).first();
-  return !!row;
+interface ResolvedAttendees {
+  attendees: Array<{ email: string | null; name: string | null }>;
+  eventTitle: string | null;
+  eventStart: string | null;
+  eventEnd: string | null;
+  /** 0..1 — confidence we have the right calendar attribution. */
+  confidence: number;
+}
+
+// Pick the counterpart attendees and (when available) calendar event details
+// for a note. Prefers Granola's own calendar_event.attendees; falls back to a
+// time-window match against the user's ICS feed.
+function resolveAttendees(
+  env: Env,
+  note: GranolaNote,
+  icsEventsAll: IcsEvent[],
+): ResolvedAttendees {
+  const userEmail = (env.EMAIL_TO ?? '').toLowerCase();
+  const ownerEmail = (note.owner?.email ?? '').toLowerCase();
+  const granolaPeople: GranolaAttendee[] =
+    note.calendar_event?.attendees ?? note.attendees ?? [];
+
+  let eventTitle: string | null = note.calendar_event?.summary ?? null;
+  let eventStart: string | null = note.calendar_event?.start_time ?? null;
+  let eventEnd: string | null = note.calendar_event?.end_time ?? null;
+
+  const granolaOthers = granolaPeople.filter(
+    (a) => a.email && a.email.toLowerCase() !== userEmail && a.email.toLowerCase() !== ownerEmail,
+  );
+
+  if (granolaOthers.length > 0) {
+    return {
+      attendees: granolaOthers.map((a) => ({ email: a.email ?? null, name: a.name ?? null })),
+      eventTitle,
+      eventStart,
+      eventEnd,
+      confidence: 0.95,
+    };
+  }
+
+  const candidates = eventsAround(icsEventsAll, new Date(note.created_at), 15);
+  const match = bestEventForNote(candidates, note.title);
+  if (!match.event) {
+    return { attendees: [], eventTitle, eventStart, eventEnd, confidence: match.confidence };
+  }
+
+  const others = (match.event.attendees ?? []).filter(
+    (a) => (a.email ?? '').toLowerCase() !== userEmail,
+  );
+  return {
+    attendees: others.map((a) => ({ email: a.email ?? null, name: a.name ?? null })),
+    eventTitle: match.event.summary ?? eventTitle,
+    eventStart: match.event.start.toISOString(),
+    eventEnd: match.event.end.toISOString(),
+    confidence: match.confidence,
+  };
+}
+
+// Compact view of a note suitable for the queue UI (no embedded transcript
+// array; preview only).
+function noteForQueuePayload(note: GranolaNote): Record<string, unknown> {
+  return {
+    id: note.id,
+    title: note.title,
+    web_url: note.web_url,
+    owner: note.owner,
+    created_at: note.created_at,
+    summary: note.summary,
+    transcript_preview: transcriptToString(note.transcript)?.slice(0, 1500) ?? null,
+  };
+}
+
+async function queueNoteOnce(
+  env: Env,
+  kind: QueueKind,
+  note: GranolaNote,
+  payload: Record<string, unknown>,
+  reason: string,
+): Promise<void> {
+  if (await hasPendingForNote(env, kind, note.id)) return;
+  await enqueueConfirmation(env, kind, payload);
+  await logDisposition(env, note, 'queued', `${kind}: ${reason}`, null, null);
 }
 
 async function logDisposition(
@@ -170,44 +243,7 @@ async function processNote(
     return 'skipped';
   }
 
-  // Prefer Granola's own calendar_event.attendees when present (high confidence,
-  // attribution from the meeting source). Fall back to ICS time-window match.
-  const userEmail = (env.EMAIL_TO ?? '').toLowerCase();
-  const ownerEmail = (note.owner?.email ?? '').toLowerCase();
-
-  const granolaPeople: GranolaAttendee[] =
-    note.calendar_event?.attendees ?? note.attendees ?? [];
-
-  let icsEvent: IcsEvent | null = null;
-  let calendarConfidence = 0;
-  let attendees: Array<{ email: string | null; name: string | null }> = [];
-  let eventTitle: string | null = note.calendar_event?.summary ?? null;
-  let eventStart: string | null = note.calendar_event?.start_time ?? null;
-  let eventEnd: string | null = note.calendar_event?.end_time ?? null;
-
-  const granolaOthers = granolaPeople.filter(
-    (a) => a.email && a.email.toLowerCase() !== userEmail && a.email.toLowerCase() !== ownerEmail,
-  );
-
-  if (granolaOthers.length > 0) {
-    attendees = granolaOthers.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
-    calendarConfidence = 0.95;
-  } else {
-    const recordedAt = new Date(note.created_at);
-    const candidates = eventsAround(icsEventsAll, recordedAt, 15);
-    const match = bestEventForNote(candidates, note.title);
-    icsEvent = match.event;
-    calendarConfidence = match.confidence;
-    if (icsEvent) {
-      const others = (icsEvent.attendees ?? []).filter(
-        (a) => (a.email ?? '').toLowerCase() !== userEmail,
-      );
-      attendees = others.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
-      eventTitle = icsEvent.summary ?? eventTitle;
-      eventStart = icsEvent.start.toISOString();
-      eventEnd = icsEvent.end.toISOString();
-    }
-  }
+  const { attendees, eventTitle, eventStart, eventEnd, confidence } = resolveAttendees(env, note, icsEventsAll);
 
   // First try the cheap three-signal vote. With Granola Personal API
   // returning no real attendees and Proton ICS being a rolling window,
@@ -265,35 +301,13 @@ async function processNote(
     return 'skipped';
   }
 
-  // Stash a compact view of the note for the queue UI (no embedded transcript array).
-  const noteForQueue = {
-    id: note.id,
-    title: note.title,
-    web_url: note.web_url,
-    owner: note.owner,
-    created_at: note.created_at,
-    summary: note.summary,
-    transcript_preview: transcriptToString(note.transcript)?.slice(0, 1500) ?? null,
-  };
-
   if (cls.classification === 'ambiguous') {
-    if (!(await isAlreadyQueued(env, 'meeting_classification', note.id))) {
-      await env.DB.prepare(
-        `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-         VALUES (?1, 'meeting_classification', ?2, 'pending', ?3)`,
-      ).bind(
-        // queued via meeting_classification
-        ulid(),
-        JSON.stringify({
-          note: noteForQueue,
-          event_title: eventTitle,
-          attendees,
-          classifier_reason: cls.reason,
-        }),
-        nowIso(),
-      ).run();
-      await logDisposition(env, note, 'queued', `meeting_classification: ${cls.reason}`, null, null);
-    }
+    await queueNoteOnce(env, 'meeting_classification', note, {
+      note: noteForQueuePayload(note),
+      event_title: eventTitle,
+      attendees,
+      classifier_reason: cls.reason,
+    }, cls.reason ?? 'classifier said ambiguous');
     return 'processed';
   }
 
@@ -301,22 +315,12 @@ async function processNote(
   // rather than silently creating a phantom (unknown) row.
   const counterpart = attendees[0] ?? null;
   if (!counterpart || (!counterpart.email && !counterpart.name)) {
-    if (!(await isAlreadyQueued(env, 'person_resolution', note.id))) {
-      await env.DB.prepare(
-        `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-         VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
-      ).bind(
-        ulid(),
-        JSON.stringify({
-          note: noteForQueue,
-          attendee: null,
-          candidates: [],
-          reason: 'no usable attendee info from Granola or ICS',
-        }),
-        nowIso(),
-      ).run();
-      await logDisposition(env, note, 'queued', 'person_resolution: no attendee info', null, null);
-    }
+    await queueNoteOnce(env, 'person_resolution', note, {
+      note: noteForQueuePayload(note),
+      attendee: null,
+      candidates: [],
+      reason: 'no usable attendee info from Granola or ICS',
+    }, 'no attendee info');
     return 'processed';
   }
 
@@ -325,104 +329,100 @@ async function processNote(
     name: counterpart.name,
   });
   if (resolved.ambiguous) {
-    if (!(await isAlreadyQueued(env, 'person_resolution', note.id))) {
-      await env.DB.prepare(
-        `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-         VALUES (?1, 'person_resolution', ?2, 'pending', ?3)`,
-      ).bind(
-        ulid(),
-        JSON.stringify({
-          note: noteForQueue,
-          attendee: counterpart,
-          candidates: resolved.candidatesIfAmbiguous,
-        }),
-        nowIso(),
-      ).run();
-      await logDisposition(env, note, 'queued', 'person_resolution: ambiguous candidates', null, null);
-    }
+    await queueNoteOnce(env, 'person_resolution', note, {
+      note: noteForQueuePayload(note),
+      attendee: counterpart,
+      candidates: resolved.candidatesIfAmbiguous,
+    }, 'ambiguous candidates');
     return 'processed';
   }
 
   // Persist meeting (transcript folded to a single string).
   const transcriptStr = transcriptToString(note.transcript);
-  const meetingId = ulid();
-  const now = nowIso();
-  await env.DB.prepare(
-    `INSERT INTO meetings (
-       id, person_id, source, source_ref, recorded_at, meeting_context,
-       calendar_match_confidence, event_title, event_start, event_end,
-       attendees_at_match, transcript, summary, classification, created_at,
-       source_content_hash, source_updated_at
-     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
-  ).bind(
-    meetingId,
-    resolved.personId,
-    SOURCE,
-    note.id,
-    note.created_at,
-    null,
-    calendarConfidence || null,
+  const meetingId = await persistMeeting(env, {
+    note,
+    personId: resolved.personId,
+    attendees,
     eventTitle,
     eventStart,
     eventEnd,
-    JSON.stringify(attendees),
-    transcriptStr,
-    note.summary,
-    cls.classification,
-    now,
-    contentHash,
-    note.updated_at ?? null,
-  ).run();
-
-  // Extract and apply.
-  const existing = await env.DB.prepare(
-    'SELECT display_name, context, needs, offers, roles, trajectory_tags FROM people WHERE id = ?1',
-  ).bind(resolved.personId).first<{
-    display_name: string | null;
-    context: string | null;
-    needs: string | null;
-    offers: string | null;
-    roles: string | null;
-    trajectory_tags: string | null;
-  }>();
-
-  const me = await findMePerson(env);
-  const result = await extractFromMeeting(env, {
-    source: SOURCE,
-    noteTitle: note.title,
-    noteSummary: note.summary,
+    confidence,
+    classification: cls.classification,
     transcript: transcriptStr,
-    existingPerson: existing
-      ? {
-          displayName: existing.display_name,
-          context: existing.context,
-          needs: existing.needs,
-          offers: existing.offers,
-          roles: parseJsonArray(existing.roles),
-          trajectoryTags: parseJsonArray(existing.trajectory_tags),
-        }
-      : undefined,
-    userPerson: me
-      ? {
-          displayName: me.display_name,
-          context: me.context,
-          needs: me.needs,
-          offers: me.offers,
-          roles: parseJsonArray(me.roles),
-          trajectoryTags: parseJsonArray(me.trajectory_tags),
-        }
-      : undefined,
+    contentHash,
   });
 
-  await applyExtractionResult(env, {
+  await runExtractionAndApply(env, {
+    note,
     personId: resolved.personId,
     meetingId,
-    result,
-    meetingRecordedAt: note.created_at,
-    mePersonId: me?.id ?? null,
+    transcript: transcriptStr,
   });
   await logDisposition(env, note, 'processed', 'classifier 1:1 path', meetingId, resolved.personId);
   return 'processed';
+}
+
+interface PersistMeetingArgs {
+  note: GranolaNote;
+  personId: string;
+  attendees: Array<{ email: string | null; name: string | null }>;
+  eventTitle: string | null;
+  eventStart: string | null;
+  eventEnd: string | null;
+  confidence: number;
+  classification: string;
+  transcript: string | null;
+  contentHash: string;
+}
+
+async function persistMeeting(env: Env, a: PersistMeetingArgs): Promise<string> {
+  const meetingId = ulid();
+  await insertMeeting(env, {
+    id: meetingId,
+    personId: a.personId,
+    source: SOURCE,
+    sourceRef: a.note.id,
+    recordedAt: a.note.created_at,
+    calendarMatchConfidence: a.confidence || null,
+    eventTitle: a.eventTitle,
+    eventStart: a.eventStart,
+    eventEnd: a.eventEnd,
+    attendees: a.attendees,
+    transcript: a.transcript,
+    summary: a.note.summary,
+    classification: a.classification,
+    sourceContentHash: a.contentHash,
+    sourceUpdatedAt: a.note.updated_at ?? null,
+  });
+  return meetingId;
+}
+
+interface ExtractAndApplyArgs {
+  note: GranolaNote;
+  personId: string;
+  meetingId: string;
+  transcript: string | null;
+  reprocess?: boolean;
+}
+
+async function runExtractionAndApply(env: Env, a: ExtractAndApplyArgs): Promise<void> {
+  const ctx = await loadExtractionPeerContext(env, a.personId);
+  const result = await extractFromMeeting(env, {
+    source: SOURCE,
+    noteTitle: a.note.title,
+    noteSummary: a.note.summary,
+    transcript: a.transcript,
+    existingPerson: ctx.existingPerson,
+    userPerson: ctx.userPerson,
+  });
+  await applyExtractionResult(env, {
+    personId: a.personId,
+    meetingId: a.meetingId,
+    result,
+    reprocess: a.reprocess,
+    meetingRecordedAt: a.note.created_at,
+    mePersonId: ctx.mePersonId,
+  });
 }
 
 interface ExistingMeeting {
@@ -454,36 +454,7 @@ async function reprocessNote(
 ): Promise<ProcessOutcome> {
   if (isSoloNote(note, env.EMAIL_TO ?? null)) return 'skipped';
 
-  const userEmail = (env.EMAIL_TO ?? '').toLowerCase();
-  const ownerEmail = (note.owner?.email ?? '').toLowerCase();
-  const granolaPeople: GranolaAttendee[] =
-    note.calendar_event?.attendees ?? note.attendees ?? [];
-
-  let attendees: Array<{ email: string | null; name: string | null }> = [];
-  let eventTitle: string | null = note.calendar_event?.summary ?? null;
-  let eventStart: string | null = note.calendar_event?.start_time ?? null;
-  let eventEnd: string | null = note.calendar_event?.end_time ?? null;
-
-  const granolaOthers = granolaPeople.filter(
-    (a) => a.email && a.email.toLowerCase() !== userEmail && a.email.toLowerCase() !== ownerEmail,
-  );
-
-  if (granolaOthers.length > 0) {
-    attendees = granolaOthers.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
-  } else {
-    const recordedAt = new Date(note.created_at);
-    const candidates = eventsAround(icsEventsAll, recordedAt, 15);
-    const match = bestEventForNote(candidates, note.title);
-    if (match.event) {
-      const others = (match.event.attendees ?? []).filter(
-        (a) => (a.email ?? '').toLowerCase() !== userEmail,
-      );
-      attendees = others.map((a) => ({ email: a.email ?? null, name: a.name ?? null }));
-      eventTitle = match.event.summary ?? eventTitle;
-      eventStart = match.event.start.toISOString();
-      eventEnd = match.event.end.toISOString();
-    }
-  }
+  const { attendees, eventTitle, eventStart, eventEnd } = resolveAttendees(env, note, icsEventsAll);
 
   const cls = await classifyMeeting(env, {
     noteTitle: note.title,
@@ -504,54 +475,40 @@ async function reprocessNote(
 
   const classificationChanged = cls.classification !== existing.classification;
   const personChanged = resolvedPersonId !== null && resolvedPersonId !== existing.person_id;
-
   const transcriptStr = transcriptToString(note.transcript);
 
   // Always refresh the stored content even if classification flipped; the
   // queue item below explains the conflict.
-  await env.DB.prepare(
-    `UPDATE meetings
-     SET event_title = ?1, event_start = ?2, event_end = ?3,
-         attendees_at_match = ?4, transcript = ?5, summary = ?6,
-         classification = ?7, source_content_hash = ?8, source_updated_at = ?9
-     WHERE id = ?10`,
-  ).bind(
+  await updateMeetingFromNote(env, {
+    id: existing.id,
     eventTitle,
     eventStart,
     eventEnd,
-    JSON.stringify(attendees),
-    transcriptStr,
-    note.summary,
-    cls.classification,
-    contentHash,
-    note.updated_at ?? null,
-    existing.id,
-  ).run();
+    attendees,
+    transcript: transcriptStr,
+    summary: note.summary,
+    classification: cls.classification,
+    sourceContentHash: contentHash,
+    sourceUpdatedAt: note.updated_at ?? null,
+  });
 
   if (classificationChanged || personChanged) {
-    await env.DB.prepare(
-      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-       VALUES (?1, 'meeting_reclassification', ?2, 'pending', ?3)`,
-    ).bind(
-      ulid(),
-      JSON.stringify({
-        meeting_id: existing.id,
-        previous_classification: existing.classification,
-        previous_person_id: existing.person_id,
-        new_classification: cls.classification,
-        new_resolved_person_id: resolvedPersonId,
-        attendees,
-        note: {
-          id: note.id,
-          title: note.title,
-          web_url: note.web_url,
-          summary: note.summary,
-          transcript_preview: transcriptStr?.slice(0, 1500) ?? null,
-        },
-        classifier_reason: cls.reason,
-      }),
-      nowIso(),
-    ).run();
+    await enqueueConfirmation(env, 'meeting_reclassification', {
+      meeting_id: existing.id,
+      previous_classification: existing.classification,
+      previous_person_id: existing.person_id,
+      new_classification: cls.classification,
+      new_resolved_person_id: resolvedPersonId,
+      attendees,
+      note: {
+        id: note.id,
+        title: note.title,
+        web_url: note.web_url,
+        summary: note.summary,
+        transcript_preview: transcriptStr?.slice(0, 1500) ?? null,
+      },
+      classifier_reason: cls.reason,
+    });
     return 'reprocessed';
   }
 
@@ -559,52 +516,12 @@ async function reprocessNote(
   // reprocess flag (resets per-meeting signals, doesn't bump meeting_count).
   if (cls.classification !== '1:1') return 'reprocessed';
 
-  const existingPerson = await env.DB.prepare(
-    'SELECT display_name, context, needs, offers, roles, trajectory_tags FROM people WHERE id = ?1',
-  ).bind(existing.person_id).first<{
-    display_name: string | null;
-    context: string | null;
-    needs: string | null;
-    offers: string | null;
-    roles: string | null;
-    trajectory_tags: string | null;
-  }>();
-
-  const me = await findMePerson(env);
-  const result = await extractFromMeeting(env, {
-    source: SOURCE,
-    noteTitle: note.title,
-    noteSummary: note.summary,
-    transcript: transcriptStr,
-    existingPerson: existingPerson
-      ? {
-          displayName: existingPerson.display_name,
-          context: existingPerson.context,
-          needs: existingPerson.needs,
-          offers: existingPerson.offers,
-          roles: parseJsonArray(existingPerson.roles),
-          trajectoryTags: parseJsonArray(existingPerson.trajectory_tags),
-        }
-      : undefined,
-    userPerson: me
-      ? {
-          displayName: me.display_name,
-          context: me.context,
-          needs: me.needs,
-          offers: me.offers,
-          roles: parseJsonArray(me.roles),
-          trajectoryTags: parseJsonArray(me.trajectory_tags),
-        }
-      : undefined,
-  });
-
-  await applyExtractionResult(env, {
+  await runExtractionAndApply(env, {
+    note,
     personId: existing.person_id,
     meetingId: existing.id,
-    result,
+    transcript: transcriptStr,
     reprocess: true,
-    meetingRecordedAt: note.created_at,
-    mePersonId: me?.id ?? null,
   });
   return 'reprocessed';
 }
@@ -617,20 +534,9 @@ async function getHighWaterMark(env: Env): Promise<string | null> {
 }
 
 async function setHighWaterMark(env: Env, ts: string): Promise<void> {
-  const now = nowIso();
   await env.DB.prepare(
     `INSERT INTO ingest_state (source, last_processed_at, last_processed_ref, updated_at)
      VALUES (?1, ?2, NULL, ?3)
      ON CONFLICT(source) DO UPDATE SET last_processed_at = excluded.last_processed_at, updated_at = excluded.updated_at`,
-  ).bind(SOURCE, ts, now).run();
-}
-
-function parseJsonArray(s: string | null): string[] {
-  if (!s) return [];
-  try {
-    const parsed = JSON.parse(s);
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
+  ).bind(SOURCE, ts, nowIso()).run();
 }

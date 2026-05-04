@@ -120,3 +120,21 @@ export function parseJsonObject<T = Record<string, unknown>>(s: string | null): 
     return {} as T;
   }
 }
+
+/** Union-merge two string lists, preserving order, deduping, dropping
+ *  empty strings. Used everywhere we merge roles / trajectory_tags /
+ *  aliases between an existing row and incoming input. */
+export function mergeStringArray(
+  existing: string[],
+  incoming: string[] | undefined | null,
+): string[] {
+  if (!incoming || incoming.length === 0) return existing;
+  const set = new Set(existing);
+  for (const x of incoming) if (x) set.add(x);
+  return [...set];
+}
+
+/** Dedupe while preserving order. Drops empty strings. */
+export function uniqStrings(xs: string[]): string[] {
+  return [...new Set(xs.filter(Boolean))];
+}

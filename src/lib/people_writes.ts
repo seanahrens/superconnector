@@ -6,9 +6,10 @@
 import type { Env } from '../../worker-configuration';
 import type { ExtractionResult, ExtractedPersonUpdates, ExtractedSignal } from './extract';
 import type { PersonRow } from './db';
-import { parseJsonArray, parseJsonObject } from './db';
+import { parseJsonArray, parseJsonObject, mergeStringArray } from './db';
 import { upsertPersonVector } from './embed';
 import { normalizeTagName, normalizeTagArray } from './tag_norm';
+import { enqueueConfirmation } from './queue';
 import { ulid, nowIso } from './ulid';
 
 const HIGH_CONFIDENCE = 0.7;
@@ -46,7 +47,7 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
   // caller didn't supply one (manual dictation with no timestamp).
   const metDate = (meetingRecordedAt ?? now).slice(0, 10);
 
-  const person = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(personId).first<PersonRow>();
+  const person = await loadPerson(env, personId);
   if (!person) throw new Error(`person not found: ${personId}`);
 
   const updates = result.person_updates;
@@ -56,9 +57,7 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
     await env.DB.prepare(
       `DELETE FROM signals WHERE meeting_id = ?1`,
     ).bind(meetingId).run();
-    await env.DB.prepare(
-      `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
-    ).bind(now, personId).run();
+    await touchPersonUpdatedAt(env, personId, now);
   } else if (meetingId) {
     // First ingest of this meeting — count it. last_met_date keeps the
     // greater of the existing value and this meeting's date so old notes
@@ -75,79 +74,24 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
     ).bind(metDate, now, personId).run();
   } else {
     // No meeting attached (manual dictation / annotation). Just bump updated_at.
-    await env.DB.prepare(
-      `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
-    ).bind(now, personId).run();
+    await touchPersonUpdatedAt(env, personId, now);
   }
 
   // Direct writes for high-confidence cases.
   if (!lowConfidence) {
-    const newDisplayName = updates.display_name ?? person.display_name ?? null;
-    const newRoles = mergeArray(parseJsonArray(person.roles), normalizeTagArray(updates.roles_add));
-    const newTraj = mergeArray(parseJsonArray(person.trajectory_tags), normalizeTagArray(updates.trajectory_tags_add));
-    const newStatus = { ...parseJsonObject(person.status), ...(updates.status_patch ?? {}) };
-
-    let newContext = person.context;
-    if (updates.context_delta) {
-      const dateMarker = `[${now.slice(0, 10)}]`;
-      newContext = person.context_manual_override
-        ? person.context // never overwrite manual override
-        : [person.context, `${dateMarker} ${updates.context_delta}`].filter(Boolean).join('\n\n');
-    }
-
-    const newNeeds = updates.needs_replacement ?? person.needs;
-    const newOffers = updates.offers_replacement ?? person.offers;
-    const newHome = updates.home_location ?? person.home_location ?? null;
-    const newWorkLoc = updates.work_location ?? person.work_location ?? null;
-    const newWorkOrg = updates.work_org ?? person.work_org ?? null;
-
-    await env.DB.prepare(
-      `UPDATE people
-       SET display_name = ?1,
-           roles = ?2,
-           trajectory_tags = ?3,
-           status = ?4,
-           context = ?5,
-           needs = ?6,
-           offers = ?7,
-           home_location = ?8,
-           work_location = ?9,
-           work_org = ?10,
-           updated_at = ?11
-       WHERE id = ?12`,
-    ).bind(
-      newDisplayName,
-      JSON.stringify(newRoles),
-      JSON.stringify(newTraj),
-      JSON.stringify(newStatus),
-      newContext,
-      newNeeds,
-      newOffers,
-      newHome,
-      newWorkLoc,
-      newWorkOrg,
-      now,
-      personId,
-    ).run();
+    await mergePersonUpdatesIntoRow(env, person, updates, now);
   } else {
     // Park the diff for the user to review.
-    await env.DB.prepare(
-      `INSERT INTO confirmation_queue (id, kind, payload, status, created_at)
-       VALUES (?1, 'extraction_review', ?2, 'pending', ?3)`,
-    ).bind(
-      ulid(),
-      JSON.stringify({ person_id: personId, meeting_id: meetingId, updates, summary: result.summary }),
-      now,
-    ).run();
+    await enqueueConfirmation(env, 'extraction_review', {
+      person_id: personId,
+      meeting_id: meetingId,
+      updates,
+      summary: result.summary,
+    });
   }
 
   // Signals: write all, but flag low confidence on individual signals via the confidence field.
-  for (const sig of result.signals) {
-    await env.DB.prepare(
-      `INSERT INTO signals (id, person_id, meeting_id, kind, body, confidence, superseded_by, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)`,
-    ).bind(ulid(), personId, meetingId, sig.kind, sig.body, sig.confidence, now).run();
-  }
+  await insertSignals(env, personId, meetingId, result.signals, now);
 
   // Tag proposals → tag_proposals queue (they all need user review by design).
   for (const prop of result.tag_proposals) {
@@ -172,14 +116,8 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
   }
 
   // Re-embed if context-shaped fields likely changed.
-  if (!lowConfidence && (updates.context_delta || updates.needs_replacement || updates.offers_replacement)) {
-    const fresh = await env.DB.prepare(
-      'SELECT context, needs, offers FROM people WHERE id = ?1',
-    ).bind(personId).first<{ context: string | null; needs: string | null; offers: string | null }>();
-    const text = [fresh?.context, fresh?.needs, fresh?.offers].filter(Boolean).join('\n\n');
-    if (text.length > 0) {
-      await upsertPersonVector(env, personId, text);
-    }
+  if (!lowConfidence && contextShapedChange(updates)) {
+    await reembedPersonContext(env, personId);
   }
 
   // "Me" updates from microphone-side self-statements. Only apply when:
@@ -205,75 +143,117 @@ async function applySelfUpdates(
   lowConfidence: boolean,
   now: string,
 ): Promise<void> {
-  const me = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(meId).first<PersonRow>();
+  const me = await loadPerson(env, meId);
   if (!me) return;
 
   if (updates && !lowConfidence) {
-    const newDisplayName = updates.display_name ?? me.display_name ?? null;
-    const newRoles = mergeArray(parseJsonArray(me.roles), normalizeTagArray(updates.roles_add));
-    const newTraj = mergeArray(parseJsonArray(me.trajectory_tags), normalizeTagArray(updates.trajectory_tags_add));
-    const newStatus = { ...parseJsonObject(me.status), ...(updates.status_patch ?? {}) };
-    let newContext = me.context;
-    if (updates.context_delta) {
-      const dateMarker = `[${now.slice(0, 10)}]`;
-      newContext = me.context_manual_override
-        ? me.context
-        : [me.context, `${dateMarker} ${updates.context_delta}`].filter(Boolean).join('\n\n');
-    }
-    const newNeeds = updates.needs_replacement ?? me.needs;
-    const newOffers = updates.offers_replacement ?? me.offers;
-    const newHome = updates.home_location ?? me.home_location ?? null;
-    const newWorkLoc = updates.work_location ?? me.work_location ?? null;
-    const newWorkOrg = updates.work_org ?? me.work_org ?? null;
-
-    await env.DB.prepare(
-      `UPDATE people
-         SET display_name = ?1, roles = ?2, trajectory_tags = ?3, status = ?4,
-             context = ?5, needs = ?6, offers = ?7,
-             home_location = ?8, work_location = ?9, work_org = ?10,
-             updated_at = ?11
-       WHERE id = ?12`,
-    ).bind(
-      newDisplayName,
-      JSON.stringify(newRoles),
-      JSON.stringify(newTraj),
-      JSON.stringify(newStatus),
-      newContext,
-      newNeeds,
-      newOffers,
-      newHome,
-      newWorkLoc,
-      newWorkOrg,
-      now,
-      meId,
-    ).run();
-
-    if (updates.context_delta || updates.needs_replacement || updates.offers_replacement) {
-      const text = [newContext, newNeeds, newOffers].filter(Boolean).join('\n\n');
-      if (text.length > 0) {
-        try {
-          await upsertPersonVector(env, meId, text);
-        } catch (err) {
-          console.error('apply self updates: re-embed failed', err);
-        }
+    await mergePersonUpdatesIntoRow(env, me, updates, now);
+    if (contextShapedChange(updates)) {
+      try {
+        await reembedPersonContext(env, meId);
+      } catch (err) {
+        console.error('apply self updates: re-embed failed', err);
       }
     }
   }
 
   if (signals && signals.length > 0) {
-    for (const sig of signals) {
-      await env.DB.prepare(
-        `INSERT INTO signals (id, person_id, meeting_id, kind, body, confidence, superseded_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)`,
-      ).bind(ulid(), meId, meetingId, sig.kind, sig.body, sig.confidence, now).run();
-    }
+    await insertSignals(env, meId, meetingId, signals, now);
   }
 }
 
-function mergeArray(existing: string[], incoming: string[] | undefined): string[] {
-  if (!incoming || incoming.length === 0) return existing;
-  const set = new Set(existing);
-  for (const x of incoming) set.add(x);
-  return [...set];
+// ---------------------------------------------------------------------------
+// Field-merge helpers shared by the counterpart and self-update paths.
+
+async function loadPerson(env: Env, id: string): Promise<PersonRow | null> {
+  return await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(id).first<PersonRow>();
+}
+
+async function touchPersonUpdatedAt(env: Env, id: string, now: string): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE people SET updated_at = ?1 WHERE id = ?2`,
+  ).bind(now, id).run();
+}
+
+function contextShapedChange(updates: ExtractedPersonUpdates | undefined): boolean {
+  if (!updates) return false;
+  return Boolean(updates.context_delta || updates.needs_replacement || updates.offers_replacement);
+}
+
+// Merge an extraction's `person_updates` into an in-memory PersonRow + write
+// the resulting fields to D1. Honors context_manual_override and dedupes
+// roles/trajectory_tags. The set of columns this writes is identical to the
+// columns the counterpart and self-update paths used to UPDATE inline.
+async function mergePersonUpdatesIntoRow(
+  env: Env,
+  current: PersonRow,
+  updates: ExtractedPersonUpdates,
+  now: string,
+): Promise<void> {
+  const newDisplayName = updates.display_name ?? current.display_name ?? null;
+  const newRoles = mergeStringArray(parseJsonArray(current.roles), normalizeTagArray(updates.roles_add));
+  const newTraj = mergeStringArray(parseJsonArray(current.trajectory_tags), normalizeTagArray(updates.trajectory_tags_add));
+  const newStatus = { ...parseJsonObject(current.status), ...(updates.status_patch ?? {}) };
+
+  let newContext = current.context;
+  if (updates.context_delta) {
+    const dateMarker = `[${now.slice(0, 10)}]`;
+    newContext = current.context_manual_override
+      ? current.context // never overwrite manual override
+      : [current.context, `${dateMarker} ${updates.context_delta}`].filter(Boolean).join('\n\n');
+  }
+
+  await env.DB.prepare(
+    `UPDATE people
+     SET display_name = ?1,
+         roles = ?2,
+         trajectory_tags = ?3,
+         status = ?4,
+         context = ?5,
+         needs = ?6,
+         offers = ?7,
+         home_location = ?8,
+         work_location = ?9,
+         work_org = ?10,
+         updated_at = ?11
+     WHERE id = ?12`,
+  ).bind(
+    newDisplayName,
+    JSON.stringify(newRoles),
+    JSON.stringify(newTraj),
+    JSON.stringify(newStatus),
+    newContext,
+    updates.needs_replacement ?? current.needs,
+    updates.offers_replacement ?? current.offers,
+    updates.home_location ?? current.home_location ?? null,
+    updates.work_location ?? current.work_location ?? null,
+    updates.work_org ?? current.work_org ?? null,
+    now,
+    current.id,
+  ).run();
+}
+
+async function reembedPersonContext(env: Env, personId: string): Promise<void> {
+  const fresh = await env.DB.prepare(
+    'SELECT context, needs, offers FROM people WHERE id = ?1',
+  ).bind(personId).first<{ context: string | null; needs: string | null; offers: string | null }>();
+  const text = [fresh?.context, fresh?.needs, fresh?.offers].filter(Boolean).join('\n\n');
+  if (text.length > 0) await upsertPersonVector(env, personId, text);
+}
+
+async function insertSignals(
+  env: Env,
+  personId: string,
+  meetingId: string | null,
+  signals: ExtractedSignal[] | undefined,
+  now: string,
+): Promise<void> {
+  if (!signals || signals.length === 0) return;
+  for (const sig of signals) {
+    await env.DB.prepare(
+      `INSERT INTO signals (id, person_id, meeting_id, kind, body, confidence, superseded_by, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)`,
+    ).bind(ulid(), personId, meetingId, sig.kind, sig.body, sig.confidence, now).run();
+  }
 }
 

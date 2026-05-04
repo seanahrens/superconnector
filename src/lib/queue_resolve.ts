@@ -15,9 +15,9 @@ import { GranolaClient, transcriptToString, noteContentHash, isFutureEventNote }
 import { resolvePerson } from './resolve';
 import { extractFromMeeting } from './extract';
 import { applyExtractionResult } from './people_writes';
-import { findMePerson } from './me';
-import { ulid, nowIso } from './ulid';
-import { parseJsonArray } from './db';
+import { ulid } from './ulid';
+import { insertMeeting, findMeetingBySourceRef } from './meetings';
+import { loadExtractionPeerContext } from './extraction_context';
 
 const SOURCE = 'granola';
 
@@ -47,9 +47,7 @@ export async function materializeFromGranolaNote(
 
   // If the note has already been turned into a meeting (e.g. the user
   // resolved twice), reuse it.
-  const existing = await env.DB.prepare(
-    `SELECT id, person_id FROM meetings WHERE source = ?1 AND source_ref = ?2 LIMIT 1`,
-  ).bind(SOURCE, opts.noteId).first<{ id: string; person_id: string }>();
+  const existing = await findMeetingBySourceRef(env, SOURCE, opts.noteId);
   if (existing) return { meetingId: existing.id, personId: existing.person_id, reused: true };
 
   let personId = opts.personId;
@@ -67,89 +65,46 @@ export async function materializeFromGranolaNote(
   const transcriptStr = transcriptToString(note.transcript);
   const hash = await noteContentHash(note);
   const meetingId = ulid();
-  const now = nowIso();
-  const eventTitle = note.calendar_event?.summary ?? null;
-  const eventStart = note.calendar_event?.start_time ?? null;
-  const eventEnd = note.calendar_event?.end_time ?? null;
 
   // Best-effort attendees JSON: prefer calendar_event.attendees, else the
   // single counterpart we resolved against.
   const calAttendees = note.calendar_event?.attendees ?? [];
-  const attendeesJson =
+  const attendees =
     calAttendees.length > 0
       ? calAttendees.map((a) => ({ email: a.email ?? null, name: a.name ?? null }))
       : opts.counterpart
       ? [{ email: opts.counterpart.email ?? null, name: opts.counterpart.name ?? null }]
       : [];
 
-  await env.DB.prepare(
-    `INSERT INTO meetings (
-       id, person_id, source, source_ref, recorded_at, meeting_context,
-       calendar_match_confidence, event_title, event_start, event_end,
-       attendees_at_match, transcript, summary, classification, created_at,
-       source_content_hash, source_updated_at
-     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)`,
-  ).bind(
-    meetingId,
+  await insertMeeting(env, {
+    id: meetingId,
     personId,
-    SOURCE,
-    note.id,
-    note.created_at,
-    null,
-    null,
-    eventTitle,
-    eventStart,
-    eventEnd,
-    JSON.stringify(attendeesJson),
-    transcriptStr,
-    note.summary,
-    opts.classification,
-    now,
-    hash,
-    note.updated_at ?? null,
-  ).run();
+    source: SOURCE,
+    sourceRef: note.id,
+    recordedAt: note.created_at,
+    eventTitle: note.calendar_event?.summary ?? null,
+    eventStart: note.calendar_event?.start_time ?? null,
+    eventEnd: note.calendar_event?.end_time ?? null,
+    attendees,
+    transcript: transcriptStr,
+    summary: note.summary,
+    classification: opts.classification,
+    sourceContentHash: hash,
+    sourceUpdatedAt: note.updated_at ?? null,
+  });
 
   if (opts.classification !== '1:1') {
     return { meetingId, personId, reused: false };
   }
 
-  const existingPerson = await env.DB.prepare(
-    'SELECT display_name, context, needs, offers, roles, trajectory_tags FROM people WHERE id = ?1',
-  ).bind(personId).first<{
-    display_name: string | null;
-    context: string | null;
-    needs: string | null;
-    offers: string | null;
-    roles: string | null;
-    trajectory_tags: string | null;
-  }>();
-
-  const me = await findMePerson(env);
+  const ctx = await loadExtractionPeerContext(env, personId);
   const result = await extractFromMeeting(env, {
     source: SOURCE,
     noteTitle: note.title,
     noteSummary: note.summary,
     transcript: transcriptStr,
-    existingPerson: existingPerson
-      ? {
-          displayName: existingPerson.display_name,
-          context: existingPerson.context,
-          needs: existingPerson.needs,
-          offers: existingPerson.offers,
-          roles: parseJsonArray(existingPerson.roles),
-          trajectoryTags: parseJsonArray(existingPerson.trajectory_tags),
-        }
-      : undefined,
-    userPerson: me
-      ? {
-          displayName: me.display_name,
-          context: me.context,
-          needs: me.needs,
-          offers: me.offers,
-          roles: parseJsonArray(me.roles),
-          trajectoryTags: parseJsonArray(me.trajectory_tags),
-        }
-      : undefined,
+    existingPerson: ctx.existingPerson,
+    userPerson: ctx.userPerson,
   });
 
   await applyExtractionResult(env, {
@@ -157,7 +112,7 @@ export async function materializeFromGranolaNote(
     meetingId,
     result,
     meetingRecordedAt: note.created_at,
-    mePersonId: me?.id ?? null,
+    mePersonId: ctx.mePersonId,
   });
   return { meetingId, personId, reused: false };
 }

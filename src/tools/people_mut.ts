@@ -7,7 +7,7 @@ import { resolvePerson } from '../lib/resolve';
 import { upsertPersonVector } from '../lib/embed';
 import { nowIso } from '../lib/ulid';
 import type { PersonRow } from '../lib/db';
-import { parseJsonArray, parseJsonObject } from '../lib/db';
+import { parseJsonArray, parseJsonObject, mergeStringArray } from '../lib/db';
 import { normalizeTagArray } from '../lib/tag_norm';
 
 interface AddInput {
@@ -35,7 +35,7 @@ export const addPersonTool: Tool<AddInput, { person_id: string; created: boolean
     if (input.initial_context || input.roles) {
       const existing = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(r.personId).first<PersonRow>();
       if (existing) {
-        const newRoles = mergeArr(parseJsonArray(existing.roles), normalizeTagArray(input.roles));
+        const newRoles = mergeStringArray(parseJsonArray(existing.roles), normalizeTagArray(input.roles));
         const newContext = existing.context_manual_override
           ? existing.context
           : input.initial_context ?? existing.context;
@@ -164,13 +164,6 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     return { ok: true } as const;
   },
 };
-
-function mergeArr(existing: string[], incoming: string[] | undefined): string[] {
-  if (!incoming) return existing;
-  const set = new Set(existing);
-  for (const x of incoming) set.add(x);
-  return [...set];
-}
 
 function normalizePhone(raw: string | null | undefined): string | null {
   if (!raw) return null;

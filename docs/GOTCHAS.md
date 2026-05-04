@@ -130,3 +130,28 @@ advancing (so next tick re-fetches the same notes).
   `<option></option>`.
 - The Pages worker uses `adapter-cloudflare` v7 (v4 demands wrangler ^3 and
   conflicts with our wrangler 4).
+
+## Shared helpers (refactor invariants)
+
+Several files used to copy-paste the same SQL or merge logic. They've been
+consolidated; if you re-inline them you'll silently drift from the canonical
+behavior. See "Reach for the helper, not the SQL" in `CLAUDE.md` for the
+list. The cases that bite hardest if you ignore them:
+
+- The `meetings` row INSERT has 17 columns. Use `insertMeeting` so when a
+  column is added you only update one place.
+- `confirmation_queue` inserts must include `status = 'pending'` and a
+  ULID id; `enqueueConfirmation` does both. Forgetting `pending` leaves
+  rows that the queue UI can't see.
+- `applyExtractionResult` honours `context_manual_override` (don't
+  overwrite a context the user manually authored). If you write your
+  own UPDATE on the people row, you'll bypass that and stomp the user's
+  edits.
+- The "person view for extraction" (display_name + context + needs +
+  offers + roles + trajectory_tags as arrays) is loaded by
+  `loadExtractionContext`. The three ingest paths (`processNote`,
+  `reprocessNote`, `materializeFromGranolaNote`) all go through it; a
+  fourth path that hand-rolls the SELECT will diverge in subtle ways.
+- `recomputePersonMeetingStats(env, personId)` is the canonical recompute
+  for `meeting_count` and `last_met_date`. The admin endpoints that delete
+  meetings call it; if you write a new one, do too.

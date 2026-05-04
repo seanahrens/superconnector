@@ -38,19 +38,52 @@ that's been learned and decided since.
 
 ```
 src/                    Worker (API + cron + MCP)
-  cron/                 ingest.ts, daily_email.ts
-  lib/                  granola, ics, classify, resolve, extract, anthropic, embed, email, …
-  plays/                brief, match_*, ways_to_help, weekly_digest
+  index.ts              Entrypoint: health, mcp, /api/* routes, scheduled handler
+  cron/                 ingest, daily_email, backup
+  lib/                  Domain primitives (see "lib map" below)
+  plays/                brief, match, ways_to_help, weekly_digest
   role_packs/           founder/funder/talent/advisor JSON
   tools/                15 tools shared by MCP + web chat — single registry in tools/index.ts
   mcp/                  JSON-RPC server (one file)
-  api/                  Hono routes mounted under /api/*
+  api/                  Hono routes mounted under /api/* (admin, diagnostics, people, queue, …)
 migrations/             D1 SQL migrations
 pages/                  SvelteKit app, deploys as superconnector-pages worker
 scripts/setup.sh        Idempotent one-shot provisioner — read this before changing infra
 cron-hub/               Standalone Worker; multi-project cron fan-out (not currently active)
 docs/                   GOTCHAS.md, TODOS.md
 ```
+
+### lib map
+
+| Module | Responsibility |
+|---|---|
+| `lib/db.ts`              | D1 row types + `parseJsonArray`, `parseJsonObject`, `mergeStringArray`, `uniqStrings` |
+| `lib/people_repo.ts`     | `createPerson` — full INSERT for the `people` table; shared by resolve.ts and me.ts |
+| `lib/me.ts`              | `findMePerson`, `ensureMePerson` — the user's own row (matched by EMAIL_TO) |
+| `lib/resolve.ts`         | Email-then-fuzzy person resolution; creates new rows via `createPerson` |
+| `lib/meetings.ts`        | `insertMeeting`, `updateMeetingFromNote`, `findMeetingBySourceRef`, `recomputePersonMeetingStats` |
+| `lib/queue.ts`           | `enqueueConfirmation`, `hasPendingForNote`, `setQueueStatus` — confirmation_queue writes |
+| `lib/extraction_context.ts` | Loads the "person view" the LLM extractor needs (counterpart + Me) |
+| `lib/people_writes.ts`   | `applyExtractionResult` — merges an extraction into a person row + signals + followups + tag proposals |
+| `lib/extract.ts`         | Anthropic Haiku extraction call shape + result types |
+| `lib/classify.ts`        | Three-signal vote + LLM classifier for meeting type + counterpart name |
+| `lib/granola.ts`         | Granola Personal API client + transcript folding + content hashing |
+| `lib/ics.ts`             | ICS parser + time-window event matching |
+| `lib/anthropic.ts`       | Claude SDK plumbing — `getClient`, `cached`, `jsonCall`, model constants |
+| `lib/merge_people.ts`    | Merge-candidate ranking + Haiku-reconciled person merge |
+| `lib/avatars.ts`         | Gravatar → DiceBear cascade with caching |
+
+### api map
+
+| Module | Responsibility |
+|---|---|
+| `api/auth.ts`            | `requireAuth` middleware (Bearer WEB_AUTH_SECRET, fails CLOSED in prod) |
+| `api/errors.ts`          | `asJson` wrapper — turns thrown errors into JSON 500s for routes |
+| `api/admin.ts`           | `/api/admin/*` repair endpoints (cleanup-phantoms, normalize-tags, repull-granola, …) |
+| `api/diagnostics.ts`     | `/api/run/check-{ics,granola}` read-only upstream probes |
+| `api/people.ts`          | List/detail/edit, reorder, merge candidates + merge action, avatar resolve |
+| `api/queue.ts`           | confirmation_queue read + `/:id/resolve` (deferred-ingest finisher) |
+| `api/notes.ts`, `tags.ts`, `followups.ts`, `chat.ts`, `digest.ts` | thin route layers over tools / SQL |
 
 ## Auth model (post 2026-04-29)
 
@@ -128,6 +161,32 @@ the same means nothing was uploaded).
   `wrangler tail`.
 - Don't write feature docs files unless asked — the source plus this folder
   is the documentation. Comments belong only when the *why* is non-obvious.
+
+## Reach for the helper, not the SQL
+
+The codebase had several near-identical SQL blocks copy-pasted across call
+sites; these are now shared helpers. Use them, don't re-inline the SQL.
+
+- Inserting a meeting → `insertMeeting` from `lib/meetings.ts` (also
+  `updateMeetingFromNote`, `findMeetingBySourceRef`,
+  `recomputePersonMeetingStats`).
+- Inserting a confirmation_queue row → `enqueueConfirmation` from
+  `lib/queue.ts` (also `hasPendingForNote`, `setQueueStatus`).
+- Creating a person row → `createPerson` from `lib/people_repo.ts`.
+- Loading the "person view" the extractor needs → `loadExtractionContext` /
+  `loadExtractionPeerContext` from `lib/extraction_context.ts`.
+- Merging two string lists / deduping → `mergeStringArray` / `uniqStrings`
+  from `lib/db.ts`.
+- Wrapping a Hono route so thrown errors become JSON 500s →
+  `asJson(...)` from `api/errors.ts`. Hono routes that need to fail in
+  one specific way still return `c.json({error}, 4xx)` directly.
+- Applying an LLM extraction → `applyExtractionResult` from
+  `lib/people_writes.ts`. Don't write the merged-fields UPDATE inline.
+
+The ingest cron's two paths (first-pull vs reprocess-on-edit) both go
+through `resolveAttendees`, `runExtractionAndApply`, and `persistMeeting`
+in `cron/ingest.ts`. If you change the extraction call shape, change it
+once in `runExtractionAndApply`.
 
 ## Data protection
 
