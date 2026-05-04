@@ -19,18 +19,54 @@
   }
   let { view, allTags, onChanged }: Props = $props();
 
-  let editing = $state<'context' | 'needs' | 'offers' | null>(null);
-  let editValue = $state('');
+  type ProseField = 'context' | 'needs' | 'offers';
+  // Per-field edit state. The header pencil ALSO opens every empty field
+  // for editing (see isEditing/visibleCard below), so we track each one
+  // independently rather than the previous single-slot model.
+  let editingFields = $state<Record<ProseField, boolean>>({
+    context: false,
+    needs: false,
+    offers: false,
+  });
+  let editValues = $state<Record<ProseField, string>>({
+    context: '',
+    needs: '',
+    offers: '',
+  });
+
   let newTagName = $state('');
   let mergeOpen = $state(false);
-  // Edit-mode for the header card. When false, empty fields are hidden so
-  // sparse profiles aren't cluttered with placeholders. Toggling on shows
-  // every field (with its EditableField input visible) so the user can fill
-  // them in.
+  // Edit-mode for the header card. When false, empty cards/fields are
+  // hidden so sparse profiles read clean. Toggling on:
+  //   - reveals all currently-empty cards (Context, Needs, Offers, Signals,
+  //     Recent meetings)
+  //   - opens an inline editor on the empty prose fields
+  //   - keeps Offers in the right column even when Needs is hidden
+  //     (inline grid-column on need-card / offer-card; mobile media query
+  //     overrides to single-column)
   let editingHeader = $state(false);
   function hasVal(s: string | null | undefined): boolean {
     return !!(s && s.trim());
   }
+  function fieldHasData(f: ProseField): boolean {
+    return hasVal(view.person[f]);
+  }
+  function isEditing(f: ProseField): boolean {
+    // Explicit edit click wins; otherwise empty fields auto-edit when the
+    // header pencil is on.
+    return editingFields[f] || (editingHeader && !fieldHasData(f));
+  }
+  function visibleCard(f: ProseField): boolean {
+    return fieldHasData(f) || editingHeader;
+  }
+  // When editing kicks in for a field, seed its draft from the saved value.
+  $effect(() => {
+    for (const f of ['context', 'needs', 'offers'] as ProseField[]) {
+      if (isEditing(f) && editValues[f] === '' && fieldHasData(f)) {
+        editValues[f] = view.person[f] ?? '';
+      }
+    }
+  });
 
   // Connection degree: 0 = You (only one row), 1 = direct connection
   // (default), 2 = needs intro / "Distant". Default 1 shows nothing.
@@ -111,25 +147,31 @@
     }
   }
 
-  async function startEdit(field: 'context' | 'needs' | 'offers') {
-    editing = field;
-    editValue = view.person[field] ?? '';
+  function startEdit(f: ProseField) {
+    editingFields[f] = true;
+    editValues[f] = view.person[f] ?? '';
   }
 
-  async function saveEdit() {
-    if (!editing) return;
+  async function saveField(f: ProseField) {
     const patch: Record<string, unknown> = {};
-    if (editing === 'context') {
-      patch.context_replacement = editValue;
+    const value = editValues[f];
+    if (f === 'context') {
+      patch.context_replacement = value;
       patch.context_manual_override = true;
-    } else if (editing === 'needs') {
-      patch.needs_replacement = editValue;
-    } else if (editing === 'offers') {
-      patch.offers_replacement = editValue;
+    } else if (f === 'needs') {
+      patch.needs_replacement = value;
+    } else if (f === 'offers') {
+      patch.offers_replacement = value;
     }
     await api.patch(`/api/people/${view.person.id}`, patch);
-    editing = null;
+    editingFields[f] = false;
+    editValues[f] = '';
     await onChanged();
+  }
+
+  function cancelEdit(f: ProseField) {
+    editingFields[f] = false;
+    editValues[f] = '';
   }
 
   async function addTag() {
@@ -464,7 +506,7 @@
   </header>
 
   <!-- ======================================================== CONTEXT -->
-  {#if editingHeader || hasVal(view.person.context) || editing === 'context'}
+  {#if visibleCard('context')}
     <section class="card context-card">
       <header class="card-hd">
         <h3>
@@ -472,75 +514,69 @@
           Context
           {#if view.person.context_manual_override}<span class="badge">manual</span>{/if}
         </h3>
-        {#if editing !== 'context'}
+        {#if !isEditing('context')}
           <button class="btn small ghost" onclick={() => startEdit('context')}>
             edit
           </button>
         {/if}
       </header>
-      {#if editing === 'context'}
-        <textarea bind:value={editValue} rows="6"></textarea>
+      {#if isEditing('context')}
+        <textarea bind:value={editValues.context} rows="6"></textarea>
         <div class="row">
-          <button class="btn btn-primary" onclick={saveEdit}>Save</button>
-          <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
+          <button class="btn btn-primary" onclick={() => saveField('context')}>Save</button>
+          <button class="btn ghost" onclick={() => cancelEdit('context')}>Cancel</button>
         </div>
       {:else}
         {@const ctx = splitDateMarker(view.person.context)}
-        {#if ctx.rest || ctx.date}
-          <div class="prose context-body">
-            {#if ctx.date}<span class="datepill">{ctx.date}</span>{/if}<span class="ctx-text">{ctx.rest || '—'}</span>
-          </div>
-        {:else}
-          <div class="empty">
-            <p class="muted">No context yet — drop a meeting transcript or use the chat below.</p>
-          </div>
-        {/if}
+        <div class="prose context-body">
+          {#if ctx.date}<span class="datepill">{ctx.date}</span>{/if}<span class="ctx-text">{ctx.rest || '—'}</span>
+        </div>
       {/if}
     </section>
   {/if}
 
   <!-- ======================================================== NEEDS / OFFERS -->
-  {#if editingHeader || hasVal(view.person.needs) || hasVal(view.person.offers) || editing === 'needs' || editing === 'offers'}
+  <!-- Inline `grid-column: 1` / `grid-column: 2` pin each card to its
+       column so Offers stays on the right even when Needs is hidden. The
+       mobile media query at the bottom of the file overrides both back
+       to column 1 for the single-column layout. -->
+  {#if visibleCard('needs') || visibleCard('offers')}
     <div class="grid2">
-      {#if editingHeader || hasVal(view.person.needs) || editing === 'needs'}
-        <section class="card need-card">
+      {#if visibleCard('needs')}
+        <section class="card need-card" style="grid-column: 1;">
           <header class="card-hd">
             <h3><span class="hd-dot need-dot"></span>Needs</h3>
-            {#if editing !== 'needs'}
+            {#if !isEditing('needs')}
               <button class="btn small ghost" onclick={() => startEdit('needs')}>edit</button>
             {/if}
           </header>
-          {#if editing === 'needs'}
-            <textarea bind:value={editValue} rows="4"></textarea>
+          {#if isEditing('needs')}
+            <textarea bind:value={editValues.needs} rows="4"></textarea>
             <div class="row">
-              <button class="btn btn-primary" onclick={saveEdit}>Save</button>
-              <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
+              <button class="btn btn-primary" onclick={() => saveField('needs')}>Save</button>
+              <button class="btn ghost" onclick={() => cancelEdit('needs')}>Cancel</button>
             </div>
-          {:else if view.person.needs}
-            <p class="prose">{view.person.needs}</p>
           {:else}
-            <p class="muted small empty-line">Nothing captured yet.</p>
+            <p class="prose">{view.person.needs}</p>
           {/if}
         </section>
       {/if}
-      {#if editingHeader || hasVal(view.person.offers) || editing === 'offers'}
-        <section class="card offer-card">
+      {#if visibleCard('offers')}
+        <section class="card offer-card" style="grid-column: 2;">
           <header class="card-hd">
             <h3><span class="hd-dot offer-dot"></span>Offers</h3>
-            {#if editing !== 'offers'}
+            {#if !isEditing('offers')}
               <button class="btn small ghost" onclick={() => startEdit('offers')}>edit</button>
             {/if}
           </header>
-          {#if editing === 'offers'}
-            <textarea bind:value={editValue} rows="4"></textarea>
+          {#if isEditing('offers')}
+            <textarea bind:value={editValues.offers} rows="4"></textarea>
             <div class="row">
-              <button class="btn btn-primary" onclick={saveEdit}>Save</button>
-              <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
+              <button class="btn btn-primary" onclick={() => saveField('offers')}>Save</button>
+              <button class="btn ghost" onclick={() => cancelEdit('offers')}>Cancel</button>
             </div>
-          {:else if view.person.offers}
-            <p class="prose">{view.person.offers}</p>
           {:else}
-            <p class="muted small empty-line">Nothing captured yet.</p>
+            <p class="prose">{view.person.offers}</p>
           {/if}
         </section>
       {/if}
@@ -1280,6 +1316,10 @@
   /* ──────────────────────────────────────────── responsive */
   @media (max-width: 720px) {
     .grid2 { grid-template-columns: 1fr; }
+    /* Override the inline grid-column on need-card / offer-card so the
+       single-column mobile layout doesn't push Offers into a phantom
+       second column. */
+    .grid2 > .card { grid-column: 1 !important; }
     .chatbox { height: 320px; }
     .hero { padding: 16px; flex-direction: column; }
     .timeline-row { grid-template-columns: 1fr; }
