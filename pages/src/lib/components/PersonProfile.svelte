@@ -9,6 +9,7 @@
   import PersonAvatar from './PersonAvatar.svelte';
   import ContactRow from './ContactRow.svelte';
   import EditableField from './EditableField.svelte';
+  import SegmentedToggle from './SegmentedToggle.svelte';
   import { fmtShortDate, fmtShortDateTime } from '$lib/dates';
 
   interface Props {
@@ -29,6 +30,24 @@
   let editingHeader = $state(false);
   function hasVal(s: string | null | undefined): boolean {
     return !!(s && s.trim());
+  }
+
+  // Connection degree: 0 = You (only one row), 1 = direct connection
+  // (default), 2 = needs intro / "Distant". Default 1 shows nothing.
+  // 0 and 2 surface as a corner ribbon and as a label in editingHeader.
+  function degreeLabel(d: number | null | undefined): string | null {
+    if (d === 0) return 'You';
+    if (d === 2) return 'Distant';
+    return null;
+  }
+  // Server-truth derived value; the SegmentedToggle binds to it via a
+  // function binding (read = this derived, write = PATCH and refetch).
+  let degreeChoice = $derived<'1' | '2'>(view.person.degree === 2 ? '2' : '1');
+  async function commitDegree(next: '1' | '2') {
+    const n = Number(next);
+    if (n === view.person.degree) return;
+    await api.patch(`/api/people/${view.person.id}`, { degree: n });
+    await onChanged();
   }
 
   // Auxiliary actions dropdown (merge / delete). Click-outside via document
@@ -228,7 +247,17 @@
   }
 </script>
 
-<div class="profile">
+<div class="profile" class:has-band={degreeLabel(view.person.degree) != null}>
+  {#if degreeLabel(view.person.degree)}
+    <div
+      class="corner-band"
+      class:band-you={view.person.degree === 0}
+      class:band-distant={view.person.degree === 2}
+      aria-label="Connection degree: {degreeLabel(view.person.degree)}"
+    >
+      {degreeLabel(view.person.degree)}
+    </div>
+  {/if}
   <!-- ======================================================== HEADER -->
   <header class="hero">
     <PersonAvatar
@@ -366,6 +395,28 @@
             {view.person.meeting_count} meeting{view.person.meeting_count === 1 ? '' : 's'}
           </span>
         {/if}
+        {#if editingHeader}
+          <span class="meta-cell degree-cell">
+            <Icon name="users" size={14} />
+            <span class="degree-label">Connection</span>
+            {#if view.person.degree === 0}
+              <span class="chip role">You</span>
+              <span class="muted small">(can't be changed — there's only one You)</span>
+            {:else}
+              <SegmentedToggle
+                ariaLabel="Connection degree"
+                options={[
+                  { value: '1', label: 'Direct' },
+                  { value: '2', label: 'Distant' },
+                ]}
+                bind:selected={
+                  () => degreeChoice,
+                  (v) => void commitDegree(v)
+                }
+              />
+            {/if}
+          </span>
+        {/if}
       </div>
       <!-- One unified tag row: roles (filled), trajectory (outlined),
            free tags (white), with × removals and an inline add input.
@@ -407,132 +458,144 @@
   </header>
 
   <!-- ======================================================== CONTEXT -->
-  <section class="card context-card">
-    <header class="card-hd">
-      <h3>
-        <span class="hd-dot context-dot"></span>
-        Context
-        {#if view.person.context_manual_override}<span class="badge">manual</span>{/if}
-      </h3>
-      {#if editing !== 'context'}
-        <button class="btn small ghost" onclick={() => startEdit('context')}>
-          edit
-        </button>
-      {/if}
-    </header>
-    {#if editing === 'context'}
-      <textarea bind:value={editValue} rows="6"></textarea>
-      <div class="row">
-        <button class="btn btn-primary" onclick={saveEdit}>Save</button>
-        <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
-      </div>
-    {:else}
-      {@const ctx = splitDateMarker(view.person.context)}
-      {#if ctx.rest || ctx.date}
-        <div class="prose context-body">
-          {#if ctx.date}<span class="datepill">{ctx.date}</span>{/if}<span class="ctx-text">{ctx.rest || '—'}</span>
+  {#if editingHeader || hasVal(view.person.context) || editing === 'context'}
+    <section class="card context-card">
+      <header class="card-hd">
+        <h3>
+          <span class="hd-dot context-dot"></span>
+          Context
+          {#if view.person.context_manual_override}<span class="badge">manual</span>{/if}
+        </h3>
+        {#if editing !== 'context'}
+          <button class="btn small ghost" onclick={() => startEdit('context')}>
+            edit
+          </button>
+        {/if}
+      </header>
+      {#if editing === 'context'}
+        <textarea bind:value={editValue} rows="6"></textarea>
+        <div class="row">
+          <button class="btn btn-primary" onclick={saveEdit}>Save</button>
+          <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
         </div>
       {:else}
-        <div class="empty">
-          <p class="muted">No context yet — drop a meeting transcript or use the chat below.</p>
-        </div>
+        {@const ctx = splitDateMarker(view.person.context)}
+        {#if ctx.rest || ctx.date}
+          <div class="prose context-body">
+            {#if ctx.date}<span class="datepill">{ctx.date}</span>{/if}<span class="ctx-text">{ctx.rest || '—'}</span>
+          </div>
+        {:else}
+          <div class="empty">
+            <p class="muted">No context yet — drop a meeting transcript or use the chat below.</p>
+          </div>
+        {/if}
       {/if}
-    {/if}
-  </section>
+    </section>
+  {/if}
 
   <!-- ======================================================== NEEDS / OFFERS -->
-  <div class="grid2">
-    <section class="card need-card">
-      <header class="card-hd">
-        <h3><span class="hd-dot need-dot"></span>Needs</h3>
-        {#if editing !== 'needs'}
-          <button class="btn small ghost" onclick={() => startEdit('needs')}>edit</button>
-        {/if}
-      </header>
-      {#if editing === 'needs'}
-        <textarea bind:value={editValue} rows="4"></textarea>
-        <div class="row">
-          <button class="btn btn-primary" onclick={saveEdit}>Save</button>
-          <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
-        </div>
-      {:else if view.person.needs}
-        <p class="prose">{view.person.needs}</p>
-      {:else}
-        <p class="muted small empty-line">Nothing captured yet.</p>
+  {#if editingHeader || hasVal(view.person.needs) || hasVal(view.person.offers) || editing === 'needs' || editing === 'offers'}
+    <div class="grid2">
+      {#if editingHeader || hasVal(view.person.needs) || editing === 'needs'}
+        <section class="card need-card">
+          <header class="card-hd">
+            <h3><span class="hd-dot need-dot"></span>Needs</h3>
+            {#if editing !== 'needs'}
+              <button class="btn small ghost" onclick={() => startEdit('needs')}>edit</button>
+            {/if}
+          </header>
+          {#if editing === 'needs'}
+            <textarea bind:value={editValue} rows="4"></textarea>
+            <div class="row">
+              <button class="btn btn-primary" onclick={saveEdit}>Save</button>
+              <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
+            </div>
+          {:else if view.person.needs}
+            <p class="prose">{view.person.needs}</p>
+          {:else}
+            <p class="muted small empty-line">Nothing captured yet.</p>
+          {/if}
+        </section>
       {/if}
-    </section>
-    <section class="card offer-card">
-      <header class="card-hd">
-        <h3><span class="hd-dot offer-dot"></span>Offers</h3>
-        {#if editing !== 'offers'}
-          <button class="btn small ghost" onclick={() => startEdit('offers')}>edit</button>
-        {/if}
-      </header>
-      {#if editing === 'offers'}
-        <textarea bind:value={editValue} rows="4"></textarea>
-        <div class="row">
-          <button class="btn btn-primary" onclick={saveEdit}>Save</button>
-          <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
-        </div>
-      {:else if view.person.offers}
-        <p class="prose">{view.person.offers}</p>
-      {:else}
-        <p class="muted small empty-line">Nothing captured yet.</p>
+      {#if editingHeader || hasVal(view.person.offers) || editing === 'offers'}
+        <section class="card offer-card">
+          <header class="card-hd">
+            <h3><span class="hd-dot offer-dot"></span>Offers</h3>
+            {#if editing !== 'offers'}
+              <button class="btn small ghost" onclick={() => startEdit('offers')}>edit</button>
+            {/if}
+          </header>
+          {#if editing === 'offers'}
+            <textarea bind:value={editValue} rows="4"></textarea>
+            <div class="row">
+              <button class="btn btn-primary" onclick={saveEdit}>Save</button>
+              <button class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
+            </div>
+          {:else if view.person.offers}
+            <p class="prose">{view.person.offers}</p>
+          {:else}
+            <p class="muted small empty-line">Nothing captured yet.</p>
+          {/if}
+        </section>
       {/if}
-    </section>
-  </div>
+    </div>
+  {/if}
 
   <!-- ======================================================== SIGNALS -->
-  <section class="card">
-    <header class="card-hd">
-      <h3><span class="hd-dot signal-dot"></span>Signals</h3>
-    </header>
-    {#if view.recentSignals.length === 0}
-      <p class="muted small empty-line">Nothing extracted yet.</p>
-    {:else}
-      <ul class="signals">
-        {#each view.recentSignals as s}
-          <li class="signal-row">
-            <span class="kind k-{s.kind}">{signalKindLabel(s.kind)}</span>
-            <span class="signal-body">{s.body}</span>
-            {#if s.confidence != null}
-              <span class="confidence" title="confidence">
-                <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
-                <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
-              </span>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </section>
+  {#if editingHeader || view.recentSignals.length > 0}
+    <section class="card">
+      <header class="card-hd">
+        <h3><span class="hd-dot signal-dot"></span>Signals</h3>
+      </header>
+      {#if view.recentSignals.length === 0}
+        <p class="muted small empty-line">Nothing extracted yet.</p>
+      {:else}
+        <ul class="signals">
+          {#each view.recentSignals as s}
+            <li class="signal-row">
+              <span class="kind k-{s.kind}">{signalKindLabel(s.kind)}</span>
+              <span class="signal-body">{s.body}</span>
+              {#if s.confidence != null}
+                <span class="confidence" title="confidence">
+                  <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
+                  <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
+                </span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 
   <!-- ======================================================== RECENT MEETINGS -->
-  <section class="card">
-    <header class="card-hd">
-      <h3><span class="hd-dot meeting-dot"></span>Recent meetings</h3>
-    </header>
-    {#if view.recentMeetings.length === 0}
-      <p class="muted small empty-line">No meetings recorded yet.</p>
-    {:else}
-      <ol class="timeline">
-        {#each view.recentMeetings as m}
-          <li class="timeline-row">
-            <div class="timeline-rail">
-              <span class="datepill">{fmtShortDate(m.recorded_at)}</span>
-            </div>
-            <div class="timeline-body">
-              <div class="meeting-meta muted small">
-                <span class="chip-mini">{m.classification}</span>
-                <span>· {m.source}</span>
+  {#if editingHeader || view.recentMeetings.length > 0}
+    <section class="card">
+      <header class="card-hd">
+        <h3><span class="hd-dot meeting-dot"></span>Recent meetings</h3>
+      </header>
+      {#if view.recentMeetings.length === 0}
+        <p class="muted small empty-line">No meetings recorded yet.</p>
+      {:else}
+        <ol class="timeline">
+          {#each view.recentMeetings as m}
+            <li class="timeline-row">
+              <div class="timeline-rail">
+                <span class="datepill">{fmtShortDate(m.recorded_at)}</span>
               </div>
-              <div class="meeting-summary">{m.summary ?? 'No summary captured.'}</div>
-            </div>
-          </li>
-        {/each}
-      </ol>
-    {/if}
-  </section>
+              <div class="timeline-body">
+                <div class="meeting-meta muted small">
+                  <span class="chip-mini">{m.classification}</span>
+                  <span>· {m.source}</span>
+                </div>
+                <div class="meeting-summary">{m.summary ?? 'No summary captured.'}</div>
+              </div>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    </section>
+  {/if}
 
   <!-- ======================================================== FOLLOWUPS -->
   <section class="card">
@@ -718,6 +781,39 @@
     flex-direction: column;
     gap: 16px;
     max-width: 920px;
+    position: relative;
+  }
+  /* Corner ribbon for non-default connection degree. Positioned absolutely
+     over the upper-right of the profile; cropped diagonally so it reads as
+     a true corner band. degree=0 → indigo "You"; degree=2 → amber
+     "Distant". degree=1 (default) renders nothing. */
+  .corner-band {
+    position: absolute;
+    top: 14px;
+    right: -34px;
+    transform: rotate(35deg);
+    transform-origin: center;
+    padding: 4px 40px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .band-you { background: var(--accent); }
+  .band-distant { background: #d97706; } /* amber */
+
+  /* Degree-edit row in editingHeader mode. Indents off the meta line
+     enough to feel like a separate control, not another stat cell. */
+  .degree-cell {
+    gap: 8px;
+  }
+  .degree-label {
+    font-weight: 600;
+    color: var(--fg);
   }
 
   /* ──────────────────────────────────────────── hero */
