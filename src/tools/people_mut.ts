@@ -15,6 +15,8 @@ interface AddInput {
   email?: string;
   initial_context?: string;
   roles?: string[];
+  // 1 = direct connection (default), 2 = needs intro.
+  degree?: number;
 }
 
 export const addPersonTool: Tool<AddInput, { person_id: string; created: boolean }> = {
@@ -27,21 +29,32 @@ export const addPersonTool: Tool<AddInput, { person_id: string; created: boolean
       email: { type: 'string' },
       initial_context: { type: 'string' },
       roles: { type: 'array', items: { type: 'string' } },
+      degree: {
+        type: 'number',
+        description:
+          'Connection degree from You: 1 = direct connection (default), 2 = needs an intro / not directly known. If unstated, leave at default 1.',
+      },
     },
     additionalProperties: false,
   },
   async handler(env, input) {
     const r = await resolvePerson(env, { email: input.email, name: input.name });
-    if (input.initial_context || input.roles) {
+    if (input.initial_context || input.roles || input.degree !== undefined) {
       const existing = await env.DB.prepare('SELECT * FROM people WHERE id = ?1').bind(r.personId).first<PersonRow>();
       if (existing) {
         const newRoles = mergeStringArray(parseJsonArray(existing.roles), normalizeTagArray(input.roles));
         const newContext = existing.context_manual_override
           ? existing.context
           : input.initial_context ?? existing.context;
+        // Never demote You (degree=0) via add_person.
+        let newDegree = existing.degree;
+        if (input.degree !== undefined && existing.degree !== 0) {
+          const d = Math.trunc(input.degree);
+          if (d === 1 || d === 2) newDegree = d;
+        }
         await env.DB.prepare(
-          `UPDATE people SET roles = ?1, context = ?2, updated_at = ?3 WHERE id = ?4`,
-        ).bind(JSON.stringify(newRoles), newContext, nowIso(), r.personId).run();
+          `UPDATE people SET roles = ?1, context = ?2, degree = ?3, updated_at = ?4 WHERE id = ?5`,
+        ).bind(JSON.stringify(newRoles), newContext, newDegree, nowIso(), r.personId).run();
         if (input.initial_context) {
           await upsertPersonVector(env, r.personId, [newContext, existing.needs, existing.offers].filter(Boolean).join('\n\n'));
         }
@@ -68,6 +81,8 @@ interface UpdateInput {
   trajectory_tags_set?: string[];
   status_patch?: Record<string, unknown>;
   context_manual_override?: boolean;
+  // 0 = you (the user); 1 = direct connection (default); 2 = needs intro.
+  degree?: number;
 }
 
 export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
@@ -92,6 +107,11 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
       trajectory_tags_set: { type: 'array', items: { type: 'string' } },
       status_patch: { type: 'object' },
       context_manual_override: { type: 'boolean' },
+      degree: {
+        type: 'number',
+        description:
+          'Connection degree from You: 0 = You (the user, only one such row), 1 = direct connection (default), 2 = needs an intro / not directly known. Only set if explicitly stated; if unstated, leave alone.',
+      },
     },
     required: ['person_id'],
     additionalProperties: false,
@@ -124,6 +144,13 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     const newOverride = input.context_manual_override !== undefined
       ? (input.context_manual_override ? 1 : 0)
       : existing.context_manual_override;
+    // Refuse to mutate the user's own row's degree: there can only be one
+    // degree-0 row, and we do not want to demote it accidentally.
+    let newDegree = existing.degree;
+    if (input.degree !== undefined && existing.degree !== 0) {
+      const d = Math.trunc(input.degree);
+      if (d === 1 || d === 2) newDegree = d;
+    }
 
     await env.DB.prepare(
       `UPDATE people SET
@@ -131,8 +158,8 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
          home_location = ?5, work_location = ?6, work_org = ?7,
          roles = ?8, trajectory_tags = ?9, status = ?10,
          context = ?11, needs = ?12, offers = ?13,
-         context_manual_override = ?14, updated_at = ?15
-       WHERE id = ?16`,
+         context_manual_override = ?14, degree = ?15, updated_at = ?16
+       WHERE id = ?17`,
     ).bind(
       newDisplayName,
       newEmail,
@@ -148,6 +175,7 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
       newNeeds,
       newOffers,
       newOverride,
+      newDegree,
       nowIso(),
       input.person_id,
     ).run();

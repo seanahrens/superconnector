@@ -10,7 +10,7 @@ import { querySimilarPeople } from '../lib/embed';
 import { loadPersonView, summarizePersonForPrompt } from '../lib/person_view';
 import { getRolePack } from '../lib/role_packs';
 
-const RANK_SYSTEM = `You rank candidate matches for the user. The user is a superconnector helping people in an ecosystem.
+const RANK_SYSTEM = `You rank candidate matches for You (the sole CRM owner, degree=0). You are a superconnector helping people in an ecosystem. Address You as "You" in any prose; never say "the user". Never propose You yourself as a candidate — degree=0 is You, not a match.
 
 Output JSON exactly:
 {
@@ -19,7 +19,7 @@ Output JSON exactly:
       "person_id": string,
       "score": number,            // 0..1, higher = better fit
       "justification": string,    // 1-2 sentences referencing concrete quoted facts
-      "concrete_next_step": string // what should the user actually do
+      "concrete_next_step": string // what You should actually do
     }
   ]
 }
@@ -27,7 +27,8 @@ Output JSON exactly:
 Rules:
 - Drop candidates whose fit is weak (< 0.3 score). Better fewer-strong than many-weak.
 - Justifications must reference real facts from the candidate's record (quote a phrase if helpful).
-- Concrete next steps: "draft intro to X mentioning Y", "send role-pack questions to Z", etc.`;
+- Concrete next steps: "draft intro to X mentioning Y", "send role-pack questions to Z", etc.
+- For degree=2 candidates, the next step should account for needing an intro (e.g. "ask <warm contact> for an intro to X").`;
 
 export type MatchKind = 'cofounder' | 'funder' | 'talent' | 'advisor';
 
@@ -63,6 +64,8 @@ export async function findMatches(
   ).bind(...ids).all<PersonRow>();
 
   const filtered = (candidates.results ?? []).filter((p) => {
+    // Never propose You as a match for anyone.
+    if (p.degree === 0) return false;
     if (opts.candidateRole) {
       const roles = parseJsonArray(p.roles);
       if (!roles.includes(opts.candidateRole)) return false;
@@ -85,6 +88,7 @@ export async function findMatches(
     needs: c.needs,
     offers: c.offers,
     last_met_date: c.last_met_date,
+    degree: c.degree,
   }));
 
   const targetPack = getRolePack(targetView.roles[0] ?? '') ?? null;

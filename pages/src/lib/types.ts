@@ -10,6 +10,8 @@ export interface PersonListItem {
   last_met_date: string | null;
   meeting_count: number;
   custom_sort_position: string | null;
+  // 0 = You; 1 = direct connection; 2 = needs intro.
+  degree: number;
 }
 
 export interface PersonView {
@@ -32,6 +34,7 @@ export interface PersonView {
     home_location: string | null;
     work_location: string | null;
     work_org: string | null;
+    degree: number;
     created_at: string;
     updated_at: string;
   };

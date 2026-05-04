@@ -27,7 +27,8 @@ export async function buildWeeklyDigest(env: Env): Promise<WeeklyDigestSection> 
     ).bind(new Date().toISOString().slice(0, 10)).all<FollowupRow>(),
     env.DB.prepare(
       `SELECT id, display_name, last_met_date, trajectory_tags FROM people
-       WHERE last_met_date IS NOT NULL
+       WHERE degree != 0
+         AND last_met_date IS NOT NULL
          AND last_met_date < date('now', '-60 days')
          AND trajectory_tags IS NOT NULL
        LIMIT 20`,

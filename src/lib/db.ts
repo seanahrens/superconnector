@@ -24,6 +24,8 @@ export interface PersonRow {
   home_location: string | null;
   work_location: string | null;
   work_org: string | null;
+  // Connection degree: 0 = you, 1 = direct (default), 2 = needs intro.
+  degree: number;
   created_at: string;
   updated_at: string;
 }

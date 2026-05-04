@@ -70,8 +70,15 @@ export async function loadPersonView(
 export function summarizePersonForPrompt(view: PersonView): string {
   const { person, roles, trajectoryTags, tags, recentSignals, openFollowups } = view;
   const lines: string[] = [];
+  if (person.degree === 0) {
+    lines.push(`This is YOU (the CRM owner, degree=0).`);
+  }
   lines.push(`Name: ${person.display_name ?? '(unknown)'}`);
   if (person.primary_email) lines.push(`Email: ${person.primary_email}`);
+  if (person.degree !== 0) {
+    const degreeLabel = person.degree === 1 ? '1 (direct connection)' : person.degree === 2 ? '2 (needs intro)' : String(person.degree);
+    lines.push(`Connection degree: ${degreeLabel}`);
+  }
   if (roles.length) lines.push(`Roles: ${roles.join(', ')}`);
   if (trajectoryTags.length) lines.push(`Trajectory: ${trajectoryTags.join(', ')}`);
   if (tags.length) lines.push(`Tags: ${tags.join(', ')}`);

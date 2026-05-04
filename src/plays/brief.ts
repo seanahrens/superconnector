@@ -3,16 +3,16 @@ import { jsonCall, MODEL_SONNET, cached } from '../lib/anthropic';
 import { loadPersonView, summarizePersonForPrompt } from '../lib/person_view';
 import { packsForRoles } from '../lib/role_packs';
 
-const BRIEF_SYSTEM = `You write a tight pre-meeting briefing for the user, who is about to meet this person.
+const BRIEF_SYSTEM = `You write a tight pre-meeting briefing for You (the sole CRM owner, degree=0), who is about to meet this person. Address You as "You" in any prose; never say "the user".
 
 Output JSON exactly:
 {
   "headline": string,                  // one sentence: who they are and the current state of things
   "recent_context": string,            // 2-4 sentences pulling on the most relevant signals
   "suggested_questions": string[],     // 3-6 questions worth asking; mix canonical + person-specific gaps
-  "missing_data_prompts": string[],    // questions targeting fields the user has no answer for yet
-  "open_followups": string[],          // any open commitments from prior meetings the user should close
-  "match_opportunities": string[]      // intros / connections worth surfacing in conversation, if any
+  "missing_data_prompts": string[],    // questions targeting fields You have no answer for yet
+  "open_followups": string[],          // any open commitments from prior meetings You should close
+  "match_opportunities": string[]      // intros / connections worth surfacing in conversation, if any. NEVER suggest introducing You — You are the meeter, not a candidate.
 }
 
 Be concrete. Don't restate the structured data verbatim — synthesize.`;

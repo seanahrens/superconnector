@@ -2,12 +2,12 @@ import type { Env } from '../../worker-configuration';
 import { cached, jsonCall, MODEL_HAIKU } from './anthropic';
 import { TAG_NAMING_RULES } from './tag_norm';
 
-const EXTRACT_GUIDE = `You extract structured updates from a meeting transcript or freetext dictation. The transcript has TWO parties:
+const EXTRACT_GUIDE = `You extract structured updates from a meeting transcript or freetext dictation. The CRM has a single owner ("You" — the row with degree=0; refer to them as "You" in any prose you write). The transcript has TWO parties:
 
-- "[microphone]" turns are the USER (the owner of this CRM) speaking. When they say things about themselves ("I just left FAR Labs", "I'm raising a seed round"), update the USER record.
+- "[microphone]" turns are You (the CRM owner) speaking. When You say things about yourself ("I just left FAR Labs", "I'm raising a seed round"), update the YOU record.
 - "[speaker]" turns are the COUNTERPART (the other person on the call). Use these to update the COUNTERPART record.
 
-If userPerson is null in the input, ignore microphone-side self-statements (no user record yet exists). Always populate person_updates / signals for the counterpart even when userPerson is present.
+If userPerson is null in the input, ignore microphone-side self-statements (no You record yet exists). Always populate person_updates / signals for the counterpart even when userPerson is present.
 
 Goals:
 - Capture concrete signals (needs, offers, status changes, commitments) with confidence scores.
@@ -63,8 +63,8 @@ Rules:
 - Be conservative. Confidence < 0.6 means the user must confirm.
 - Only extract things the source actually states or strongly implies.
 - Don't invent dates. Use ISO 8601 if present in source.
-- Don't include the user's own opinions about the counterpart; stick to what was said.
-- For user_updates / user_signals, ONLY use first-person statements made BY the [microphone] speaker. Don't put speculation about the user there.`;
+- Don't include Your own opinions about the counterpart; stick to what was said.
+- For user_updates / user_signals, ONLY use first-person statements made BY the [microphone] speaker. Don't put speculation about You there.`;
 
 interface PersonContext {
   displayName: string | null;

@@ -41,10 +41,22 @@ export async function querySimilarPeople(
   excludePersonId?: string,
 ): Promise<VectorMatch[]> {
   const values = await embed(env, text);
-  const result = await env.VECTORS.query(values, { topK, returnMetadata: 'all' });
-  return result.matches
-    .map((m) => ({ personId: String(m.metadata?.person_id ?? m.id), score: m.score }))
-    .filter((m) => m.personId !== excludePersonId);
+  // Pull a wider window so we can drop You (degree=0) and the explicit
+  // exclude without starving downstream rankers.
+  const result = await env.VECTORS.query(values, { topK: topK + 4, returnMetadata: 'all' });
+  const raw = result.matches.map((m) => ({
+    personId: String(m.metadata?.person_id ?? m.id),
+    score: m.score,
+  }));
+  const filtered = raw.filter((m) => m.personId !== excludePersonId);
+  if (filtered.length === 0) return filtered;
+  // Drop the user's own row — they're never a candidate to introduce themselves to.
+  const placeholders = filtered.map((_, i) => `?${i + 1}`).join(',');
+  const meRows = await env.DB.prepare(
+    `SELECT id FROM people WHERE id IN (${placeholders}) AND degree = 0`,
+  ).bind(...filtered.map((f) => f.personId)).all<{ id: string }>();
+  const meIds = new Set((meRows.results ?? []).map((r) => r.id));
+  return filtered.filter((m) => !meIds.has(m.personId)).slice(0, topK);
 }
 
 // Hash-gate re-embedding: returns true if the source text changed since the last

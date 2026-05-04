@@ -7,6 +7,10 @@ interface Input {
   query: string;
   limit?: number;
   semantic?: boolean;
+  // Default false: search results are typically used for "find me a candidate"
+  // flows where You (degree=0) should never appear. Pass true if the caller
+  // genuinely needs to look up the user's own profile.
+  include_me?: boolean;
 }
 
 interface Output {
@@ -31,6 +35,10 @@ export const searchPeople: Tool<Input, Output> = {
       query: { type: 'string', description: 'Search text.' },
       limit: { type: 'number', description: 'Max results (default 10).' },
       semantic: { type: 'boolean', description: 'Use vector similarity instead of FTS.' },
+      include_me: {
+        type: 'boolean',
+        description: "Include You (the user, degree=0) in results. Default false — almost never needed.",
+      },
     },
     required: ['query'],
     additionalProperties: false,
@@ -38,6 +46,9 @@ export const searchPeople: Tool<Input, Output> = {
   async handler(env, input) {
     const limit = input.limit ?? 10;
     const trimmedQuery = input.query.trim();
+    const includeMe = input.include_me === true;
+    const dropMe = <T extends { degree: number }>(rows: T[]): T[] =>
+      includeMe ? rows : rows.filter((r) => r.degree !== 0);
 
     if (input.semantic) {
       const matches = await querySimilarPeople(env, trimmedQuery, limit);
@@ -47,7 +58,8 @@ export const searchPeople: Tool<Input, Output> = {
       const rows = await env.DB.prepare(
         `SELECT * FROM people WHERE id IN (${placeholders})`,
       ).bind(...ids).all<PersonRow>();
-      const byId = new Map((rows.results ?? []).map((r) => [r.id, r]));
+      const kept = dropMe(rows.results ?? []);
+      const byId = new Map(kept.map((r) => [r.id, r]));
       return {
         matches: matches.flatMap((m) => {
           const p = byId.get(m.personId);
@@ -69,7 +81,7 @@ export const searchPeople: Tool<Input, Output> = {
       const found = await env.DB.prepare(
         'SELECT * FROM people WHERE primary_email LIKE ?1 LIMIT ?2',
       ).bind(`%${trimmedQuery.toLowerCase()}%`, limit).all<PersonRow>();
-      return { matches: (found.results ?? []).map(toMatch) };
+      return { matches: dropMe(found.results ?? []).map(toMatch) };
     }
     const ftsQuery = trimmedQuery
       .split(/\s+/)
@@ -84,7 +96,7 @@ export const searchPeople: Tool<Input, Output> = {
        LIMIT ?2`,
     ).bind(ftsQuery, limit).all<PersonRow & { snippet: string }>();
     return {
-      matches: (fts.results ?? []).map((r) => ({ ...toMatch(r), snippet: r.snippet })),
+      matches: dropMe(fts.results ?? []).map((r) => ({ ...toMatch(r), snippet: r.snippet })),
     };
   },
 };

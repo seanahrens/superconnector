@@ -12,6 +12,7 @@ import { nowIso } from '../lib/ulid';
 import { runTool } from '../tools';
 import { rankMergeCandidates, mergePeople } from '../lib/merge_people';
 import { resolveAndCacheAvatar } from '../lib/avatars';
+import { findMePersonId } from '../lib/me';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -25,6 +26,7 @@ interface ListItem {
   last_met_date: string | null;
   meeting_count: number;
   custom_sort_position: string | null;
+  degree: number;
 }
 
 app.get('/', async (c) => {
@@ -35,11 +37,10 @@ app.get('/', async (c) => {
   const tagMode = (url.searchParams.get('tag_mode') ?? 'or') as 'and' | 'or';
   const search = url.searchParams.get('q') ?? '';
   const limit = Math.min(Number(url.searchParams.get('limit') ?? 200), 500);
-  // The "Me" person — matched by env.EMAIL_TO — is excluded from the list
-  // by default. Pass include_me=1 to include them (e.g. for the merge
-  // candidate fallback on themselves, though we never want that either).
+  // The user's own row (degree = 0) is excluded from the list by default.
+  // Pass include_me=1 to include them (e.g. for the merge candidate
+  // fallback on themselves, though we never want that either).
   const includeMe = url.searchParams.get('include_me') === '1';
-  const meEmail = (c.env.EMAIL_TO ?? '').toLowerCase().trim();
 
   const tags = tagsCsv ? tagsCsv.split(',').map((t) => t.trim()).filter(Boolean) : [];
   const roles = rolesCsv ? rolesCsv.split(',').map((t) => t.trim()).filter(Boolean) : [];
@@ -63,8 +64,8 @@ app.get('/', async (c) => {
   );
   // Hide the user's own row by default — they have a dedicated profile
   // button in the layout footer.
-  if (!includeMe && meEmail) {
-    filtered = filtered.filter((p) => (p.primary_email ?? '').toLowerCase() !== meEmail);
+  if (!includeMe) {
+    filtered = filtered.filter((p) => p.degree !== 0);
   }
 
   if (search) {
@@ -134,21 +135,19 @@ app.get('/', async (c) => {
     last_met_date: p.last_met_date,
     meeting_count: p.meeting_count,
     custom_sort_position: p.custom_sort_position,
+    degree: p.degree,
   }));
 
   return c.json({ items, total: filtered.length, sort, tag_mode: tagMode });
 });
 
-// Resolve the "Me" person id by EMAIL_TO. The dedicated profile button in
-// the people layout footer hits this to know where to navigate.
+// Resolve the "Me" person id by degree=0 (with EMAIL_TO heal fallback).
+// The dedicated profile button in the people layout footer hits this to
+// know where to navigate.
 app.get('/me', async (c) => {
-  const email = (c.env.EMAIL_TO ?? '').toLowerCase().trim();
-  if (!email) return c.json({ error: 'EMAIL_TO not configured' }, 503);
-  const row = await c.env.DB.prepare(
-    'SELECT id FROM people WHERE primary_email = ?1 LIMIT 1',
-  ).bind(email).first<{ id: string }>();
-  if (!row) return c.json({ error: 'not found' }, 404);
-  return c.json({ person_id: row.id });
+  const id = await findMePersonId(c.env);
+  if (!id) return c.json({ error: 'not found' }, 404);
+  return c.json({ person_id: id });
 });
 
 app.get('/:id', async (c) => {

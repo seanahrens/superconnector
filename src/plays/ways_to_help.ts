@@ -8,7 +8,11 @@ import type { PersonRow } from '../lib/db';
 import { parseJsonArray } from '../lib/db';
 import { querySimilarPeople } from '../lib/embed';
 
-const RANK_SYSTEM = `You select the highest-leverage "ways to help" actions for the user today.
+const RANK_SYSTEM = `You select the highest-leverage "ways to help" actions for You today. You are the sole CRM owner (degree=0). Address You as "You" in any prose; never say "the user".
+
+CRITICAL: Every person in the input list is someone OTHER than You — You are not in the candidate list and must never appear as primary_person_id or secondary_person_id. Do NOT recommend introducing You to anyone, or recommend that anyone reach out to You. The "intro" kind is two non-You people You could introduce TO EACH OTHER.
+
+Each candidate carries a \`degree\` field: 1 = You already know them directly, 2 = You'd need an intro yourself to reach them. For degree=2 entries, factor in that You'd need to be intro'd before You can act.
 
 Output JSON exactly:
 {
@@ -41,11 +45,14 @@ export interface WaysToHelpItem {
 }
 
 export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHelpItem[]> {
-  // Source: top-K most recently active people who have any context to match on.
+  // Source: top-K most recently active people who have any context to match
+  // on. Exclude You (degree=0) — never seed or recommend introductions
+  // involving the user themselves.
   const seedRes = await env.DB.prepare(
     `SELECT * FROM people
-     WHERE (context IS NOT NULL AND length(context) > 30)
-        OR (needs IS NOT NULL AND length(needs) > 10)
+     WHERE degree != 0
+       AND ((context IS NOT NULL AND length(context) > 30)
+            OR (needs IS NOT NULL AND length(needs) > 10))
      ORDER BY last_met_date DESC NULLS LAST
      LIMIT 20`,
   ).all<PersonRow>();
@@ -62,7 +69,11 @@ export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHel
     const ids = matches.map((m) => m.personId);
     const placeholders = ids.map((_, i) => `?${i + 1}`).join(',');
     const rows = await env.DB.prepare(`SELECT * FROM people WHERE id IN (${placeholders})`).bind(...ids).all<PersonRow>();
-    for (const row of rows.results ?? []) candidateMap.set(row.id, row);
+    for (const row of rows.results ?? []) {
+      // querySimilarPeople already filters degree=0, but defend in depth.
+      if (row.degree === 0) continue;
+      candidateMap.set(row.id, row);
+    }
     candidateMap.set(seed.id, seed);
   }
 
@@ -78,6 +89,7 @@ export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHel
     needs: p.needs,
     offers: p.offers,
     last_met_date: p.last_met_date,
+    degree: p.degree,
   }));
 
   const result = await jsonCall<{ items: WaysToHelpItem[] }>(env, {
