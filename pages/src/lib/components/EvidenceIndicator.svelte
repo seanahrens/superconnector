@@ -32,14 +32,15 @@
 
   let label = $derived(evidence ? `Evidence: ${evidence}` : 'Evidence: unknown');
 
-  // Layout numbers — kept inside the SVG viewBox so we can scale via the
-  // single `size` prop. 10w x 12h, three bars of height 3 with 1px gaps.
-  const W = 10;
+  // ViewBox is 50% wider than tall — makes the bars read as bars, not
+  // squares. `size` controls the *height*; width derives at 1.25× to match
+  // the viewBox aspect.
+  const W = 15;
   const H = 12;
 </script>
 
-<span class="ev" style="--size: {size}px" title={TOOLTIP} aria-label={label}>
-  <svg viewBox="0 0 {W} {H}" width={size} height={size * (H / W)} aria-hidden="true">
+<span class="ev" title={TOOLTIP} aria-label={label}>
+  <svg viewBox="0 0 {W} {H}" width={size * 1.25} height={size} aria-hidden="true">
     <rect x="0" y="0" width={W} height="3" rx="0.5" class:on={filled >= 3} />
     <rect x="0" y="4" width={W} height="3" rx="0.5" class:on={filled >= 2} />
     <rect x="0" y="8" width={W} height="3" rx="0.5" class:on={filled >= 1} />
@@ -52,13 +53,16 @@
     align-items: center;
     cursor: help;
     line-height: 0;
+    /* Same gray as the site's pill text (`.kind`, `.muted`). */
+    color: var(--muted);
   }
-  /* All bars share the same neutral palette. Off bars are very light gray
-     so the filled bars carry the entire signal. */
+  /* All bars share one tone via currentColor. Off bars sit at 30% opacity
+     so the filled bars carry the whole signal. */
   rect {
-    fill: #e5e7eb; /* zinc-200 — barely visible "off" state */
+    fill: currentColor;
+    opacity: 0.3;
   }
   rect.on {
-    fill: #6b7280; /* zinc-500 — the "filled" tone */
+    opacity: 1;
   }
 </style>

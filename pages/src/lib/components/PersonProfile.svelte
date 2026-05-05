@@ -632,7 +632,9 @@
               <span class="kind k-{s.kind}">{signalKindLabel(s.kind)}</span>
               <span class="signal-body">{s.body}</span>
               {#if s.evidence}
-                <EvidenceIndicator evidence={s.evidence} />
+                <span class="signal-evidence">
+                  <EvidenceIndicator evidence={s.evidence} />
+                </span>
               {/if}
             </li>
           {/each}
@@ -1123,6 +1125,13 @@
   .k-commitment    { background: rgba(124, 58, 237, 0.10); color: #6d28d9; }
   .k-note          { background: var(--hover); color: var(--muted); }
   .signal-body { line-height: 1.5; }
+  /* Push the evidence indicator to the right edge of the signals card so
+     filled-vs-empty stacks align in a column the eye can scan. */
+  .signal-evidence {
+    justify-self: end;
+    display: inline-flex;
+    align-items: center;
+  }
 
   /* ──────────────────────────────────────────── followups */
   .followups { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -1336,6 +1345,8 @@
     .timeline-row { grid-template-columns: 1fr; }
     .timeline-rail { justify-content: flex-start; }
     .signal-row { grid-template-columns: 86px 1fr; }
-    .signal-row .evidence { grid-column: 2; justify-self: start; }
+    /* Keep the evidence stack right-edge-aligned even when the row collapses
+       to two columns — it now sits at the right end of the body row. */
+    .signal-row .signal-evidence { grid-column: 2; justify-self: end; }
   }
 </style>
