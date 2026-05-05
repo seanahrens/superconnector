@@ -1,8 +1,9 @@
 <script lang="ts">
-  // One want row: body · 3-dot evidence · age. Click to expand the source
-  // quote inline. Hover the dots for a legend tooltip (native title).
+  // One want row: body · stacked-bar evidence · age. Click to expand the
+  // source quote inline. Hover the indicator for a legend tooltip.
 
   import { fmtShortDate } from '$lib/dates';
+  import EvidenceIndicator from './EvidenceIndicator.svelte';
 
   type Evidence = 'explicit' | 'inferred' | 'weak';
 
@@ -45,21 +46,6 @@
 
   let age = $derived(ageLabel(lastValidatedAt ?? createdAt));
 
-  // Legend explaining the 3-dot evidence indicator. Native browser tooltip
-  // — accessible, zero-JS, works on both hover and long-press.
-  const EVIDENCE_LEGEND =
-    'Evidence:\n' +
-    '●●●  Explicit — they said it directly\n' +
-    '●●○  Inferred — derived from surrounding context\n' +
-    '●○○  Weak — mentioned in passing or hedged';
-
-  function dots(ev: Evidence | null): string {
-    if (ev === 'explicit') return '●●●';
-    if (ev === 'inferred') return '●●○';
-    if (ev === 'weak') return '●○○';
-    return '○○○';
-  }
-
   // Whether the row is clickable (has something to disclose).
   let clickable = $derived(!!sourceSpan);
 </script>
@@ -75,7 +61,7 @@
     <span class="body">{body}</span>
     <span class="meta">
       {#if evidence}
-        <span class="dots ev-{evidence}" title={EVIDENCE_LEGEND} aria-label="Evidence: {evidence}">{dots(evidence)}</span>
+        <EvidenceIndicator {evidence} />
       {/if}
       {#if age}
         <span class="age" title={lastValidatedAt && createdAt && lastValidatedAt !== createdAt
@@ -121,22 +107,13 @@
   }
   .meta {
     display: inline-flex;
-    align-items: baseline;
+    align-items: center;
     gap: 8px;
     color: var(--muted);
     font-size: 11px;
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
   }
-  .dots {
-    letter-spacing: -0.05em;
-    cursor: help;
-    /* Subtle color shift per evidence so the dots don't all read the same
-       hue. Stays muted to keep the row glanceable. */
-  }
-  .ev-explicit { color: #16a34a; }
-  .ev-inferred { color: var(--muted); }
-  .ev-weak     { color: #94a3b8; }
   .age { white-space: nowrap; }
 
   .quote {

@@ -11,6 +11,7 @@
   import EditableField from './EditableField.svelte';
   import SegmentedToggle from './SegmentedToggle.svelte';
   import WantRow from './WantRow.svelte';
+  import EvidenceIndicator from './EvidenceIndicator.svelte';
   import { fmtShortDate, fmtShortDateTime } from '$lib/dates';
 
   interface Props {
@@ -631,11 +632,7 @@
               <span class="kind k-{s.kind}">{signalKindLabel(s.kind)}</span>
               <span class="signal-body">{s.body}</span>
               {#if s.evidence}
-                <span
-                  class="evidence ev-{s.evidence}"
-                  title={'Evidence:\n●●●  Explicit — they said it directly\n●●○  Inferred — derived from surrounding context\n●○○  Weak — mentioned in passing or hedged'}
-                  aria-label="Evidence: {s.evidence}"
-                >{s.evidence === 'explicit' ? '●●●' : s.evidence === 'inferred' ? '●●○' : '●○○'}</span>
+                <EvidenceIndicator evidence={s.evidence} />
               {/if}
             </li>
           {/each}
@@ -1126,18 +1123,6 @@
   .k-commitment    { background: rgba(124, 58, 237, 0.10); color: #6d28d9; }
   .k-note          { background: var(--hover); color: var(--muted); }
   .signal-body { line-height: 1.5; }
-  /* Categorical evidence dots — replaces the old confidence bar. Tooltip
-     legend lives on the title attribute (set in markup). */
-  .evidence {
-    color: var(--muted);
-    font-size: 11px;
-    letter-spacing: -0.05em;
-    cursor: help;
-    text-align: right;
-  }
-  .evidence.ev-explicit { color: #16a34a; }
-  .evidence.ev-inferred { color: var(--muted); }
-  .evidence.ev-weak     { color: #94a3b8; }
 
   /* ──────────────────────────────────────────── followups */
   .followups { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
