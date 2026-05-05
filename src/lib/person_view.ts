@@ -86,12 +86,15 @@ export function summarizePersonForPrompt(view: PersonView): string {
   if (person.geo) lines.push(`Geo: ${person.geo}`);
   if (person.last_met_date) lines.push(`Last met: ${person.last_met_date}`);
   if (person.context) lines.push(`\nContext:\n${person.context}`);
-  if (person.needs) lines.push(`\nNeeds:\n${person.needs}`);
-  if (person.offers) lines.push(`\nOffers:\n${person.offers}`);
+  if (person.wants) lines.push(`\nWants:\n${person.wants}`);
   if (recentSignals.length) {
     lines.push(`\nRecent signals:`);
     for (const s of recentSignals.slice(0, 12)) {
-      lines.push(`- [${s.kind}] (${s.confidence?.toFixed(2) ?? '—'}) ${s.body}`);
+      const ev = s.evidence ? `[${s.evidence}]` : '[—]';
+      const stamp = s.last_validated_at && s.last_validated_at !== s.created_at
+        ? ` (revalidated ${s.last_validated_at.slice(0, 10)})`
+        : '';
+      lines.push(`- ${s.kind} ${ev}${stamp}: ${s.body}`);
     }
   }
   if (openFollowups.length) {

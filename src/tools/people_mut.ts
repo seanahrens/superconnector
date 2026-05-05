@@ -56,7 +56,7 @@ export const addPersonTool: Tool<AddInput, { person_id: string; created: boolean
           `UPDATE people SET roles = ?1, context = ?2, degree = ?3, updated_at = ?4 WHERE id = ?5`,
         ).bind(JSON.stringify(newRoles), newContext, newDegree, nowIso(), r.personId).run();
         if (input.initial_context) {
-          await upsertPersonVector(env, r.personId, [newContext, existing.needs, existing.offers].filter(Boolean).join('\n\n'));
+          await upsertPersonVector(env, r.personId, [newContext, existing.wants].filter(Boolean).join('\n\n'));
         }
       }
     }
@@ -71,8 +71,7 @@ interface UpdateInput {
   phone?: string;
   context_replacement?: string;
   context_append?: string;
-  needs_replacement?: string;
-  offers_replacement?: string;
+  wants_replacement?: string;
   geo?: string;
   home_location?: string;
   work_location?: string;
@@ -100,8 +99,11 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
       work_org: { type: 'string', description: 'Organization they work at.' },
       context_replacement: { type: 'string' },
       context_append: { type: 'string' },
-      needs_replacement: { type: 'string' },
-      offers_replacement: { type: 'string' },
+      wants_replacement: {
+        type: 'string',
+        description:
+          'Free-text rollup of what this person wants (point-in-time asks, durable goals, willingness to help). Replaces the old separate needs/offers fields.',
+      },
       geo: { type: 'string' },
       roles_set: { type: 'array', items: { type: 'string' } },
       trajectory_tags_set: { type: 'array', items: { type: 'string' } },
@@ -139,8 +141,7 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
     else if (input.context_append) {
       newContext = [existing.context, `[${nowIso().slice(0, 10)}] ${input.context_append}`].filter(Boolean).join('\n\n');
     }
-    const newNeeds = input.needs_replacement ?? existing.needs;
-    const newOffers = input.offers_replacement ?? existing.offers;
+    const newWants = input.wants_replacement ?? existing.wants;
     const newOverride = input.context_manual_override !== undefined
       ? (input.context_manual_override ? 1 : 0)
       : existing.context_manual_override;
@@ -157,9 +158,9 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
          display_name = ?1, primary_email = ?2, geo = ?3, phone = ?4,
          home_location = ?5, work_location = ?6, work_org = ?7,
          roles = ?8, trajectory_tags = ?9, status = ?10,
-         context = ?11, needs = ?12, offers = ?13,
-         context_manual_override = ?14, degree = ?15, updated_at = ?16
-       WHERE id = ?17`,
+         context = ?11, wants = ?12,
+         context_manual_override = ?13, degree = ?14, updated_at = ?15
+       WHERE id = ?16`,
     ).bind(
       newDisplayName,
       newEmail,
@@ -172,8 +173,7 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
       JSON.stringify(newTraj),
       JSON.stringify(newStatus),
       newContext,
-      newNeeds,
-      newOffers,
+      newWants,
       newOverride,
       newDegree,
       nowIso(),
@@ -182,8 +182,8 @@ export const updatePersonTool: Tool<UpdateInput, { ok: true }> = {
 
     // Re-embed if context-shaped fields changed.
     if (input.context_replacement !== undefined || input.context_append !== undefined ||
-        input.needs_replacement !== undefined || input.offers_replacement !== undefined) {
-      const text = [newContext, newNeeds, newOffers].filter(Boolean).join('\n\n');
+        input.wants_replacement !== undefined) {
+      const text = [newContext, newWants].filter(Boolean).join('\n\n');
       if (text.length > 0) {
         await upsertPersonVector(env, input.person_id, text);
       }

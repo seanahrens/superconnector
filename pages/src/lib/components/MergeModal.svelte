@@ -12,8 +12,7 @@
     aliases: string[];
     roles?: string[];
     context?: string | null;
-    needs?: string | null;
-    offers?: string | null;
+    wants?: string | null;
     score: number;
     reasons: string[];
   }
@@ -27,8 +26,7 @@
     aliases?: string[];
     roles?: string[];
     context?: string | null;
-    needs?: string | null;
-    offers?: string | null;
+    wants?: string | null;
   }
 
   interface Props {
@@ -176,16 +174,10 @@
                   <p class="prose">{keepPerson.context}</p>
                 </div>
               {/if}
-              {#if keepPerson.needs}
+              {#if keepPerson.wants}
                 <div class="field">
-                  <div class="field-label">Needs</div>
-                  <p class="prose">{keepPerson.needs}</p>
-                </div>
-              {/if}
-              {#if keepPerson.offers}
-                <div class="field">
-                  <div class="field-label">Offers</div>
-                  <p class="prose">{keepPerson.offers}</p>
+                  <div class="field-label">Wants</div>
+                  <p class="prose">{keepPerson.wants}</p>
                 </div>
               {/if}
             </div>
@@ -206,16 +198,10 @@
                   <p class="prose">{(selected as MergeCandidate).context}</p>
                 </div>
               {/if}
-              {#if (selected as MergeCandidate).needs}
+              {#if (selected as MergeCandidate).wants}
                 <div class="field">
-                  <div class="field-label">Needs</div>
-                  <p class="prose">{(selected as MergeCandidate).needs}</p>
-                </div>
-              {/if}
-              {#if (selected as MergeCandidate).offers}
-                <div class="field">
-                  <div class="field-label">Offers</div>
-                  <p class="prose">{(selected as MergeCandidate).offers}</p>
+                  <div class="field-label">Wants</div>
+                  <p class="prose">{(selected as MergeCandidate).wants}</p>
                 </div>
               {/if}
             </div>

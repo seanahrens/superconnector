@@ -30,11 +30,11 @@ export async function createPerson(env: Env, opts: CreatePersonOptions): Promise
   await env.DB.prepare(
     `INSERT INTO people (
        id, primary_email, display_name, aliases, roles, trajectory_tags, status,
-       geo, context, needs, offers, last_met_date, follow_up_due_date,
+       geo, context, wants, last_met_date, follow_up_due_date,
        meeting_count, custom_sort_position, context_manual_override,
        degree,
        created_at, updated_at
-     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)`,
+     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)`,
   ).bind(
     id,
     opts.email ?? null,
@@ -43,7 +43,7 @@ export async function createPerson(env: Env, opts: CreatePersonOptions): Promise
     JSON.stringify([]),
     JSON.stringify([]),
     JSON.stringify({}),
-    null, null, null, null, null, null,
+    null, null, null, null, null,
     0, null, 0,
     opts.degree ?? 1,
     now, now,

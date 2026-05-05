@@ -4,7 +4,12 @@
 // Re-embedding hash is computed against the *new* person context after writes.
 
 import type { Env } from '../../worker-configuration';
-import type { ExtractionResult, ExtractedPersonUpdates, ExtractedSignal } from './extract';
+import type {
+  ExtractionResult,
+  ExtractedPersonUpdates,
+  ExtractedSignal,
+  ExtractedEcho,
+} from './extract';
 import type { PersonRow } from './db';
 import { parseJsonArray, parseJsonObject, mergeStringArray } from './db';
 import { upsertPersonVector } from './embed';
@@ -91,7 +96,9 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
     });
   }
 
-  // Signals: write all, but flag low confidence on individual signals via the confidence field.
+  // Signals: write all new ones; bump last_validated_at on echoes; mark
+  // superseded ids when the new signal contradicts an old want.
+  await applyEchoes(env, personId, result.echoes, now);
   await insertSignals(env, personId, meetingId, result.signals, now);
 
   // Tag proposals → tag_proposals queue (they all need user review by design).
@@ -129,9 +136,22 @@ export async function applyExtractionResult(env: Env, opts: ApplyOptions): Promi
   if (
     opts.mePersonId &&
     opts.mePersonId !== personId &&
-    (result.user_updates || (result.user_signals && result.user_signals.length > 0))
+    (
+      result.user_updates ||
+      (result.user_signals && result.user_signals.length > 0) ||
+      (result.user_echoes && result.user_echoes.length > 0)
+    )
   ) {
-    await applySelfUpdates(env, opts.mePersonId, meetingId, result.user_updates, result.user_signals, lowConfidence, now);
+    await applySelfUpdates(
+      env,
+      opts.mePersonId,
+      meetingId,
+      result.user_updates,
+      result.user_signals,
+      result.user_echoes,
+      lowConfidence,
+      now,
+    );
   }
 }
 
@@ -141,6 +161,7 @@ async function applySelfUpdates(
   meetingId: string | null,
   updates: ExtractedPersonUpdates | undefined,
   signals: ExtractedSignal[] | undefined,
+  echoes: ExtractedEcho[] | undefined,
   lowConfidence: boolean,
   now: string,
 ): Promise<void> {
@@ -158,6 +179,8 @@ async function applySelfUpdates(
     }
   }
 
+  await applyEchoes(env, meId, echoes, now);
+
   if (signals && signals.length > 0) {
     await insertSignals(env, meId, meetingId, signals, now);
   }
@@ -174,7 +197,7 @@ async function touchPersonUpdatedAt(env: Env, id: string, now: string): Promise<
 
 function contextShapedChange(updates: ExtractedPersonUpdates | undefined): boolean {
   if (!updates) return false;
-  return Boolean(updates.context_delta || updates.needs_replacement || updates.offers_replacement);
+  return Boolean(updates.context_delta || updates.wants_replacement);
 }
 
 // Merge an extraction's `person_updates` into an in-memory PersonRow + write
@@ -207,21 +230,19 @@ async function mergePersonUpdatesIntoRow(
          trajectory_tags = ?3,
          status = ?4,
          context = ?5,
-         needs = ?6,
-         offers = ?7,
-         home_location = ?8,
-         work_location = ?9,
-         work_org = ?10,
-         updated_at = ?11
-     WHERE id = ?12`,
+         wants = ?6,
+         home_location = ?7,
+         work_location = ?8,
+         work_org = ?9,
+         updated_at = ?10
+     WHERE id = ?11`,
   ).bind(
     newDisplayName,
     JSON.stringify(newRoles),
     JSON.stringify(newTraj),
     JSON.stringify(newStatus),
     newContext,
-    updates.needs_replacement ?? current.needs,
-    updates.offers_replacement ?? current.offers,
+    updates.wants_replacement ?? current.wants,
     updates.home_location ?? current.home_location ?? null,
     updates.work_location ?? current.work_location ?? null,
     updates.work_org ?? current.work_org ?? null,
@@ -232,9 +253,9 @@ async function mergePersonUpdatesIntoRow(
 
 async function reembedPersonContext(env: Env, personId: string): Promise<void> {
   const fresh = await env.DB.prepare(
-    'SELECT context, needs, offers FROM people WHERE id = ?1',
-  ).bind(personId).first<{ context: string | null; needs: string | null; offers: string | null }>();
-  const text = [fresh?.context, fresh?.needs, fresh?.offers].filter(Boolean).join('\n\n');
+    'SELECT context, wants FROM people WHERE id = ?1',
+  ).bind(personId).first<{ context: string | null; wants: string | null }>();
+  const text = [fresh?.context, fresh?.wants].filter(Boolean).join('\n\n');
   if (text.length > 0) await upsertPersonVector(env, personId, text);
 }
 
@@ -247,10 +268,54 @@ async function insertSignals(
 ): Promise<void> {
   if (!signals || signals.length === 0) return;
   for (const sig of signals) {
+    const id = ulid();
+    // explicit-without-quote is a contract violation by the LLM; downgrade
+    // to "inferred" rather than rejecting the signal outright.
+    const evidence = sig.evidence === 'explicit' && !sig.source_span
+      ? 'inferred'
+      : sig.evidence;
     await env.DB.prepare(
-      `INSERT INTO signals (id, person_id, meeting_id, kind, body, confidence, superseded_by, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)`,
-    ).bind(ulid(), personId, meetingId, sig.kind, sig.body, sig.confidence, now).run();
+      `INSERT INTO signals (id, person_id, meeting_id, kind, body, evidence, source_span, superseded_by, created_at, last_validated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?8)`,
+    ).bind(id, personId, meetingId, sig.kind, sig.body, evidence, sig.source_span ?? null, now).run();
+
+    if (sig.supersedes_signal_ids && sig.supersedes_signal_ids.length > 0) {
+      // Mark each superseded signal pointing at the new row. Constrained to
+      // the same person to defend against the LLM hallucinating ids.
+      for (const oldId of sig.supersedes_signal_ids) {
+        await env.DB.prepare(
+          `UPDATE signals SET superseded_by = ?1
+            WHERE id = ?2 AND person_id = ?3 AND superseded_by IS NULL`,
+        ).bind(id, oldId, personId).run();
+      }
+    }
   }
 }
 
+/** Bump last_validated_at on existing signals the LLM said were echoed. We
+ *  also overwrite source_span when the new note has a fresher quote — keeps
+ *  the audit trail current. Constrained to the same person so a malformed
+ *  echoes[] can't cross-contaminate other people's rows. */
+async function applyEchoes(
+  env: Env,
+  personId: string,
+  echoes: ExtractedEcho[] | undefined,
+  now: string,
+): Promise<void> {
+  if (!echoes || echoes.length === 0) return;
+  for (const echo of echoes) {
+    if (echo.source_span) {
+      await env.DB.prepare(
+        `UPDATE signals
+            SET last_validated_at = ?1, source_span = ?2
+          WHERE id = ?3 AND person_id = ?4 AND superseded_by IS NULL`,
+      ).bind(now, echo.source_span, echo.signal_id, personId).run();
+    } else {
+      await env.DB.prepare(
+        `UPDATE signals
+            SET last_validated_at = ?1
+          WHERE id = ?2 AND person_id = ?3 AND superseded_by IS NULL`,
+      ).bind(now, echo.signal_id, personId).run();
+    }
+  }
+}

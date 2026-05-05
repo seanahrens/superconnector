@@ -59,7 +59,7 @@ app.get('/', async (c) => {
   if (search) {
     const needle = search.toLowerCase();
     filtered = filtered.filter((p) => {
-      const hay = [p.display_name, p.primary_email, p.context, p.needs, p.offers]
+      const hay = [p.display_name, p.primary_email, p.context, p.wants]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
@@ -240,8 +240,7 @@ app.get('/:id/merge-candidates', async (c) => {
     aliases: parseJsonArray(s.person.aliases),
     roles: parseJsonArray(s.person.roles),
     context: s.person.context,
-    needs: s.person.needs,
-    offers: s.person.offers,
+    wants: s.person.wants,
     score: s.score,
     reasons: s.reasons,
   }));

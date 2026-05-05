@@ -10,6 +10,7 @@
   import ContactRow from './ContactRow.svelte';
   import EditableField from './EditableField.svelte';
   import SegmentedToggle from './SegmentedToggle.svelte';
+  import WantRow from './WantRow.svelte';
   import { fmtShortDate, fmtShortDateTime } from '$lib/dates';
 
   interface Props {
@@ -19,19 +20,17 @@
   }
   let { view, allTags, onChanged }: Props = $props();
 
-  type ProseField = 'context' | 'needs' | 'offers';
+  type ProseField = 'context' | 'wants';
   // Per-field edit state. The header pencil ALSO opens every empty field
   // for editing (see isEditing/visibleCard below), so we track each one
   // independently rather than the previous single-slot model.
   let editingFields = $state<Record<ProseField, boolean>>({
     context: false,
-    needs: false,
-    offers: false,
+    wants: false,
   });
   let editValues = $state<Record<ProseField, string>>({
     context: '',
-    needs: '',
-    offers: '',
+    wants: '',
   });
 
   let newTagName = $state('');
@@ -61,7 +60,7 @@
   }
   // When editing kicks in for a field, seed its draft from the saved value.
   $effect(() => {
-    for (const f of ['context', 'needs', 'offers'] as ProseField[]) {
+    for (const f of ['context', 'wants'] as ProseField[]) {
       if (isEditing(f) && editValues[f] === '' && fieldHasData(f)) {
         editValues[f] = view.person[f] ?? '';
       }
@@ -158,10 +157,8 @@
     if (f === 'context') {
       patch.context_replacement = value;
       patch.context_manual_override = true;
-    } else if (f === 'needs') {
-      patch.needs_replacement = value;
-    } else if (f === 'offers') {
-      patch.offers_replacement = value;
+    } else if (f === 'wants') {
+      patch.wants_replacement = value;
     }
     await api.patch(`/api/people/${view.person.id}`, patch);
     editingFields[f] = false;
@@ -238,16 +235,46 @@
   }
 
   // Map signal kinds to friendlier labels. Display only — DB still stores
-  // the raw enum values.
+  // the raw enum values. 'need' and 'offer' kept here as fallbacks in case
+  // any pre-migration rows surface; new writes use 'want'.
   const SIGNAL_KIND_LABELS: Record<string, string> = {
-    need: 'Need',
-    offer: 'Offer',
+    want: 'Want',
+    need: 'Want',
+    offer: 'Want',
     status_change: 'Status',
     commitment: 'Commitment',
     note: 'Note',
   };
   function signalKindLabel(kind: string): string {
     return SIGNAL_KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
+  }
+
+  // Active (non-superseded) want signals, separated from the rest of the
+  // signal stream so the Wants card can render them with WantRow.
+  const activeWants = $derived(
+    view.recentSignals
+      .filter((s) => (s.kind === 'want' || s.kind === 'need' || s.kind === 'offer'))
+      .sort((a, b) => {
+        const av = a.last_validated_at ?? a.created_at;
+        const bv = b.last_validated_at ?? b.created_at;
+        return bv.localeCompare(av);
+      }),
+  );
+
+  // Other signals (status_change / commitment / note) still render in the
+  // Signals card — they aren't wants but they're useful timeline context.
+  const otherSignals = $derived(
+    view.recentSignals.filter((s) => s.kind !== 'want' && s.kind !== 'need' && s.kind !== 'offer'),
+  );
+
+  // Dim wants whose most recent validation predates the person's
+  // last_met_date — likely stale because You've talked since but they
+  // didn't reaffirm. The decision is made here so WantRow stays dumb.
+  function wantIsStale(s: { last_validated_at: string | null; created_at: string }): boolean {
+    const lastMet = view.person.last_met_date;
+    if (!lastMet) return false;
+    const stamp = (s.last_validated_at ?? s.created_at).slice(0, 10);
+    return stamp < lastMet;
   }
 
   // Group signals under the meeting they came from so the timeline reads
@@ -535,73 +562,80 @@
     </section>
   {/if}
 
-  <!-- ======================================================== NEEDS / OFFERS -->
-  <!-- Inline `grid-column: 1` / `grid-column: 2` pin each card to its
-       column so Offers stays on the right even when Needs is hidden. The
-       mobile media query at the bottom of the file overrides both back
-       to column 1 for the single-column layout. -->
-  {#if visibleCard('needs') || visibleCard('offers')}
-    <div class="grid2">
-      {#if visibleCard('needs')}
-        <section class="card need-card" style="grid-column: 1;">
-          <header class="card-hd">
-            <h3><span class="hd-dot need-dot"></span>Needs</h3>
-            {#if !isEditing('needs')}
-              <button class="btn small ghost" onclick={() => startEdit('needs')}>edit</button>
-            {/if}
-          </header>
-          {#if isEditing('needs')}
-            <textarea bind:value={editValues.needs} rows="4"></textarea>
-            <div class="row">
-              <button class="btn btn-primary" onclick={() => saveField('needs')}>Save</button>
-              <button class="btn ghost" onclick={() => cancelEdit('needs')}>Cancel</button>
-            </div>
-          {:else}
-            <p class="prose">{view.person.needs}</p>
+  <!-- ======================================================== WANTS -->
+  <!-- Single card replacing the previous Needs/Offers split. Renders
+       structured WantRow entries (one line each, evidence dot, age,
+       click to expand quote) when active want signals exist; falls back
+       to the freetext rollup string otherwise. Editing affects the
+       freetext rollup; signal-level edits happen on the meeting note. -->
+  {#if visibleCard('wants') || activeWants.length > 0}
+    <section class="card want-card">
+      <header class="card-hd">
+        <h3><span class="hd-dot want-dot"></span>Wants</h3>
+        {#if !isEditing('wants')}
+          <button class="btn small ghost" onclick={() => startEdit('wants')}>edit</button>
+        {/if}
+      </header>
+      {#if isEditing('wants')}
+        <textarea
+          bind:value={editValues.wants}
+          rows="4"
+          placeholder="What is this person trying to do, get, give, or make happen? Free text — the structured wants come from meeting notes."
+        ></textarea>
+        <div class="row">
+          <button class="btn btn-primary" onclick={() => saveField('wants')}>Save</button>
+          <button class="btn ghost" onclick={() => cancelEdit('wants')}>Cancel</button>
+        </div>
+      {:else}
+        {#if activeWants.length > 0}
+          <ul class="want-list">
+            {#each activeWants as w (w.id)}
+              <li>
+                <WantRow
+                  body={w.body}
+                  evidence={w.evidence}
+                  sourceSpan={w.source_span}
+                  lastValidatedAt={w.last_validated_at}
+                  createdAt={w.created_at}
+                  dim={wantIsStale(w)}
+                />
+              </li>
+            {/each}
+          </ul>
+          {#if hasVal(view.person.wants)}
+            <p class="prose want-summary">{view.person.wants}</p>
           {/if}
-        </section>
+        {:else if hasVal(view.person.wants)}
+          <p class="prose">{view.person.wants}</p>
+        {:else}
+          <p class="muted small empty-line">No wants captured yet.</p>
+        {/if}
       {/if}
-      {#if visibleCard('offers')}
-        <section class="card offer-card" style="grid-column: 2;">
-          <header class="card-hd">
-            <h3><span class="hd-dot offer-dot"></span>Offers</h3>
-            {#if !isEditing('offers')}
-              <button class="btn small ghost" onclick={() => startEdit('offers')}>edit</button>
-            {/if}
-          </header>
-          {#if isEditing('offers')}
-            <textarea bind:value={editValues.offers} rows="4"></textarea>
-            <div class="row">
-              <button class="btn btn-primary" onclick={() => saveField('offers')}>Save</button>
-              <button class="btn ghost" onclick={() => cancelEdit('offers')}>Cancel</button>
-            </div>
-          {:else}
-            <p class="prose">{view.person.offers}</p>
-          {/if}
-        </section>
-      {/if}
-    </div>
+    </section>
   {/if}
 
   <!-- ======================================================== SIGNALS -->
-  {#if editingHeader || view.recentSignals.length > 0}
+  <!-- Wants live in the Wants card; this section now only carries the
+       other signal kinds (status changes, commitments, notes). -->
+  {#if editingHeader || otherSignals.length > 0}
     <section class="card">
       <header class="card-hd">
         <h3><span class="hd-dot signal-dot"></span>Signals</h3>
       </header>
-      {#if view.recentSignals.length === 0}
+      {#if otherSignals.length === 0}
         <p class="muted small empty-line">Nothing extracted yet.</p>
       {:else}
         <ul class="signals">
-          {#each view.recentSignals as s}
+          {#each otherSignals as s}
             <li class="signal-row">
               <span class="kind k-{s.kind}">{signalKindLabel(s.kind)}</span>
               <span class="signal-body">{s.body}</span>
-              {#if s.confidence != null}
-                <span class="confidence" title="confidence">
-                  <span class="conf-bar"><span class="conf-fill" style="width: {Math.round((s.confidence ?? 0) * 100)}%"></span></span>
-                  <span class="conf-num">{(s.confidence * 100).toFixed(0)}%</span>
-                </span>
+              {#if s.evidence}
+                <span
+                  class="evidence ev-{s.evidence}"
+                  title={'Evidence:\n●●●  Explicit — they said it directly\n●●○  Inferred — derived from surrounding context\n●○○  Weak — mentioned in passing or hedged'}
+                  aria-label="Evidence: {s.evidence}"
+                >{s.evidence === 'explicit' ? '●●●' : s.evidence === 'inferred' ? '●●○' : '●○○'}</span>
               {/if}
             </li>
           {/each}
@@ -808,8 +842,7 @@
       aliases: view.aliases,
       roles: view.roles,
       context: view.person.context,
-      needs: view.person.needs,
-      offers: view.person.offers,
+      wants: view.person.wants,
     }}
     onClose={() => (mergeOpen = false)}
     onMerged={() => onMerged()}
@@ -963,15 +996,11 @@
   }
   .tag-dot      { background: #94a3b8; } /* slate */
   .context-dot  { background: var(--accent); }
-  .need-dot     { background: #2563eb; } /* blue */
-  .offer-dot    { background: #16a34a; } /* green */
+  .want-dot     { background: #2563eb; } /* blue — single Wants card */
   .meeting-dot  { background: #7c3aed; } /* violet */
   .signal-dot   { background: #ea580c; } /* orange */
   .followup-dot { background: #d97706; } /* amber */
   .chat-dot     { background: var(--fg); }
-
-  /* Two-column section grid for needs/offers. */
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
   /* ──────────────────────────────────────────── tags */
   .tagrow {
@@ -1030,9 +1059,19 @@
     font-weight: 600;
   }
 
-  /* ──────────────────────────────────────────── needs / offers */
-  .need-card { border-left: 3px solid #2563eb; }
-  .offer-card { border-left: 3px solid #16a34a; }
+  /* ──────────────────────────────────────────── wants */
+  .want-card { border-left: 3px solid #2563eb; }
+  .want-list { list-style: none; padding: 0; margin: 0; }
+  .want-list > li { margin: 0; }
+  /* The freetext rollup string is shown beneath the structured wants when
+     both exist — quieter than a primary list item. */
+  .want-summary {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    color: var(--muted);
+    font-size: 13px;
+  }
   .empty-line { margin: 0; }
 
   /* ──────────────────────────────────────────── timeline */
@@ -1080,33 +1119,25 @@
     background: var(--hover);
     color: var(--muted);
   }
+  .k-want          { background: rgba(37, 99, 235, 0.10); color: #1d4ed8; }
   .k-need          { background: rgba(37, 99, 235, 0.10); color: #1d4ed8; }
-  .k-offer         { background: rgba(22, 163, 74, 0.10); color: #15803d; }
+  .k-offer         { background: rgba(37, 99, 235, 0.10); color: #1d4ed8; }
   .k-status_change { background: rgba(217, 119, 6, 0.10); color: #b45309; }
   .k-commitment    { background: rgba(124, 58, 237, 0.10); color: #6d28d9; }
   .k-note          { background: var(--hover); color: var(--muted); }
   .signal-body { line-height: 1.5; }
-  .confidence {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+  /* Categorical evidence dots — replaces the old confidence bar. Tooltip
+     legend lives on the title attribute (set in markup). */
+  .evidence {
     color: var(--muted);
     font-size: 11px;
-    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.05em;
+    cursor: help;
+    text-align: right;
   }
-  .conf-bar {
-    width: 48px;
-    height: 4px;
-    background: var(--hover);
-    border-radius: 999px;
-    overflow: hidden;
-  }
-  .conf-fill {
-    display: block;
-    height: 100%;
-    background: linear-gradient(90deg, #94a3b8 0%, var(--accent) 100%);
-    border-radius: 999px;
-  }
+  .evidence.ev-explicit { color: #16a34a; }
+  .evidence.ev-inferred { color: var(--muted); }
+  .evidence.ev-weak     { color: #94a3b8; }
 
   /* ──────────────────────────────────────────── followups */
   .followups { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -1315,16 +1346,11 @@
 
   /* ──────────────────────────────────────────── responsive */
   @media (max-width: 720px) {
-    .grid2 { grid-template-columns: 1fr; }
-    /* Override the inline grid-column on need-card / offer-card so the
-       single-column mobile layout doesn't push Offers into a phantom
-       second column. */
-    .grid2 > .card { grid-column: 1 !important; }
     .chatbox { height: 320px; }
     .hero { padding: 16px; flex-direction: column; }
     .timeline-row { grid-template-columns: 1fr; }
     .timeline-rail { justify-content: flex-start; }
     .signal-row { grid-template-columns: 86px 1fr; }
-    .signal-row .confidence { grid-column: 2; justify-self: start; }
+    .signal-row .evidence { grid-column: 2; justify-self: start; }
   }
 </style>

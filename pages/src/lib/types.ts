@@ -23,8 +23,8 @@ export interface PersonView {
     primary_email: string | null;
     geo: string | null;
     context: string | null;
-    needs: string | null;
-    offers: string | null;
+    /** Single rolled-up wants string (replaces the old needs+offers split). */
+    wants: string | null;
     last_met_date: string | null;
     follow_up_due_date: string | null;
     meeting_count: number;
@@ -58,9 +58,15 @@ export interface PersonView {
     id: string;
     kind: string;
     body: string;
-    confidence: number | null;
+    /** Categorical evidence — replaces the old `confidence` float. */
+    evidence: 'explicit' | 'inferred' | 'weak' | null;
+    /** Verbatim quote from the source meeting backing this signal. */
+    source_span: string | null;
     meeting_id: string | null;
     created_at: string;
+    /** When the signal was last reaffirmed by an echo. Equals created_at
+     *  when never echoed. */
+    last_validated_at: string | null;
   }>;
   openFollowups: Array<{
     id: string;

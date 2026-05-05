@@ -11,8 +11,7 @@ export interface PersonRow {
   status: string | null;
   geo: string | null;
   context: string | null;
-  needs: string | null;
-  offers: string | null;
+  wants: string | null;
   last_met_date: string | null;
   follow_up_due_date: string | null;
   meeting_count: number;
@@ -48,15 +47,28 @@ export interface MeetingRow {
   created_at: string;
 }
 
+/** Categorical evidence type for an extracted signal. Replaces the previous
+ *  free-floating `confidence` float, which the LLM never calibrated and
+ *  bunched at 0.85–0.95. `explicit` requires a verbatim quote in
+ *  `source_span`; `inferred` is derived from surrounding context;
+ *  `weak` is mentioned in passing or hedged. */
+export type Evidence = 'explicit' | 'inferred' | 'weak';
+
+/** Allowed `kind` values for a signal row. The old `'need'`/`'offer'` split
+ *  collapsed into `'want'`; everything else is unchanged. */
+export type SignalKind = 'want' | 'status_change' | 'commitment' | 'note';
+
 export interface SignalRow {
   id: string;
   person_id: string;
   meeting_id: string | null;
   kind: string;
   body: string;
-  confidence: number | null;
+  evidence: string | null;
+  source_span: string | null;
   superseded_by: string | null;
   created_at: string;
+  last_validated_at: string | null;
 }
 
 export interface TagRow {

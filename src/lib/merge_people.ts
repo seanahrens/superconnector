@@ -163,7 +163,7 @@ stays) and DONOR (the row that will be deleted).
 
 Rules:
 - Prefer the longer / more-specific value for: display_name, primary_email,
-  geo, context, needs, offers.
+  geo, context, wants.
 - If KEEP.context_manual_override is 1, KEEP.context wins regardless.
 - Union all array fields (roles, trajectory_tags, aliases). Add the donor's
   display_name into aliases if it differs from the kept name.
@@ -176,8 +176,7 @@ Return JSON exactly matching this schema:
   "primary_email": string|null,
   "geo": string|null,
   "context": string|null,
-  "needs": string|null,
-  "offers": string|null,
+  "wants": string|null,
   "roles": string[],
   "trajectory_tags": string[],
   "aliases": string[],
@@ -190,8 +189,7 @@ interface MergedFields {
   primary_email: string | null;
   geo: string | null;
   context: string | null;
-  needs: string | null;
-  offers: string | null;
+  wants: string | null;
   roles: string[];
   trajectory_tags: string[];
   aliases: string[];
@@ -276,22 +274,20 @@ export async function mergePeople(
          primary_email = ?2,
          geo = ?3,
          context = ?4,
-         needs = ?5,
-         offers = ?6,
-         roles = ?7,
-         trajectory_tags = ?8,
-         aliases = ?9,
-         status = ?10,
-         last_met_date = ?11,
-         updated_at = ?12
-     WHERE id = ?13`,
+         wants = ?5,
+         roles = ?6,
+         trajectory_tags = ?7,
+         aliases = ?8,
+         status = ?9,
+         last_met_date = ?10,
+         updated_at = ?11
+     WHERE id = ?12`,
   ).bind(
     merged.display_name ?? keep.display_name,
     merged.primary_email ?? keep.primary_email,
     merged.geo ?? keep.geo,
     finalContext,
-    merged.needs ?? keep.needs,
-    merged.offers ?? keep.offers,
+    merged.wants ?? keep.wants,
     JSON.stringify(finalRoles),
     JSON.stringify(finalTraj),
     JSON.stringify(finalAliases),
@@ -312,11 +308,11 @@ export async function mergePeople(
   // dependents above).
   await env.DB.prepare(`DELETE FROM people WHERE id = ?1`).bind(donorId).run();
 
-  // Re-embed the kept person with the new context/needs/offers.
+  // Re-embed the kept person with the new context/wants.
   const fresh = await env.DB.prepare(
-    'SELECT context, needs, offers FROM people WHERE id = ?1',
-  ).bind(keptId).first<{ context: string | null; needs: string | null; offers: string | null }>();
-  const text = [fresh?.context, fresh?.needs, fresh?.offers].filter(Boolean).join('\n\n');
+    'SELECT context, wants FROM people WHERE id = ?1',
+  ).bind(keptId).first<{ context: string | null; wants: string | null }>();
+  const text = [fresh?.context, fresh?.wants].filter(Boolean).join('\n\n');
   if (text.length > 0) {
     try {
       await upsertPersonVector(env, keptId, text);
@@ -339,8 +335,7 @@ function rowToJson(p: PersonRow): Record<string, unknown> {
     status: parseJsonObject(p.status),
     geo: p.geo,
     context: p.context,
-    needs: p.needs,
-    offers: p.offers,
+    wants: p.wants,
     last_met_date: p.last_met_date,
     meeting_count: p.meeting_count,
     context_manual_override: p.context_manual_override,
@@ -355,8 +350,7 @@ function localMerge(keep: PersonRow, donor: PersonRow): MergedFields {
     context: keep.context_manual_override
       ? keep.context
       : longer(keep.context, donor.context),
-    needs: longer(keep.needs, donor.needs),
-    offers: longer(keep.offers, donor.offers),
+    wants: longer(keep.wants, donor.wants),
     roles: uniqStrings([...parseJsonArray(keep.roles), ...parseJsonArray(donor.roles)]),
     trajectory_tags: uniqStrings([
       ...parseJsonArray(keep.trajectory_tags),

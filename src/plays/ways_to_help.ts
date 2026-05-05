@@ -1,5 +1,5 @@
 // "Ways to help your contacts today" — top-N suggestions across the whole graph.
-// Sample recently-active people, generate match candidates per their need shape,
+// Sample recently-active people, generate match candidates per their want shape,
 // then have Sonnet rank the global top-N.
 
 import type { Env } from '../../worker-configuration';
@@ -7,12 +7,20 @@ import { jsonCall, MODEL_SONNET, cached } from '../lib/anthropic';
 import type { PersonRow } from '../lib/db';
 import { parseJsonArray, sqlPlaceholders } from '../lib/db';
 import { querySimilarPeople } from '../lib/embed';
+import { loadActiveWants, wantForPrompt } from '../lib/wants';
 
 const RANK_SYSTEM = `You select the highest-leverage "ways to help" actions for You today. You are the sole CRM owner (degree=0). Address You as "You" in any prose; never say "the user".
 
 CRITICAL: Every person in the input list is someone OTHER than You — You are not in the candidate list and must never appear as primary_person_id or secondary_person_id. Do NOT recommend introducing You to anyone, or recommend that anyone reach out to You. The "intro" kind is two non-You people You could introduce TO EACH OTHER.
 
 Each candidate carries a \`degree\` field: 1 = You already know them directly, 2 = You'd need an intro yourself to reach them. For degree=2 entries, factor in that You'd need to be intro'd before You can act.
+
+CONCEPTUAL FRAME — interlocking wants:
+Every person has WANTS — explicit (in their \`wants\` field and \`signals\`)
+or inferred from \`roles\`/\`trajectory_tags\`/\`context\`. The best "intro"
+recommendations pair two people whose wants interlock. Use your judgment
+about whether a want is likely still live based on its \`created_at\` and
+\`last_validated_at\`.
 
 Output JSON exactly:
 {
@@ -52,7 +60,7 @@ export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHel
     `SELECT * FROM people
      WHERE degree != 0
        AND ((context IS NOT NULL AND length(context) > 30)
-            OR (needs IS NOT NULL AND length(needs) > 10))
+            OR (wants IS NOT NULL AND length(wants) > 10))
      ORDER BY last_met_date DESC NULLS LAST
      LIMIT 20`,
   ).all<PersonRow>();
@@ -62,7 +70,7 @@ export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHel
   // For each seed, gather a small candidate set via vectors. Cap total to avoid runaway prompts.
   const candidateMap = new Map<string, PersonRow>();
   for (const seed of seeds.slice(0, 8)) {
-    const text = [seed.context, seed.needs, seed.offers].filter(Boolean).join('\n\n');
+    const text = [seed.context, seed.wants].filter(Boolean).join('\n\n');
     if (!text) continue;
     const matches = await querySimilarPeople(env, text, 5, seed.id);
     if (matches.length === 0) continue;
@@ -79,16 +87,19 @@ export async function waysToHelp(env: Env, limit: number = 5): Promise<WaysToHel
   const allPeople = [...candidateMap.values()];
   if (allPeople.length === 0) return [];
 
-  const peopleSummaries = allPeople.map((p) => ({
-    person_id: p.id,
-    display_name: p.display_name,
-    roles: parseJsonArray(p.roles),
-    trajectory_tags: parseJsonArray(p.trajectory_tags),
-    context: p.context,
-    needs: p.needs,
-    offers: p.offers,
-    last_met_date: p.last_met_date,
-    degree: p.degree,
+  const peopleSummaries = await Promise.all(allPeople.map(async (p) => {
+    const wants = (await loadActiveWants(env, p.id, 8)).map(wantForPrompt);
+    return {
+      person_id: p.id,
+      display_name: p.display_name,
+      roles: parseJsonArray(p.roles),
+      trajectory_tags: parseJsonArray(p.trajectory_tags),
+      context: p.context,
+      wants,
+      wants_summary: p.wants,
+      last_met_date: p.last_met_date,
+      degree: p.degree,
+    };
   }));
 
   const result = await jsonCall<{ items: WaysToHelpItem[] }>(env, {

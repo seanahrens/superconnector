@@ -28,7 +28,7 @@ interface Output {
 export const searchPeople: Tool<Input, Output> = {
   name: 'search_people',
   description:
-    'Search the people graph by name/email/freetext. By default uses FTS5 over name/context/needs/offers; pass semantic=true for vector similarity.',
+    'Search the people graph by name/email/freetext. By default uses FTS5 over name/context/wants; pass semantic=true for vector similarity.',
   inputSchema: {
     type: 'object',
     properties: {

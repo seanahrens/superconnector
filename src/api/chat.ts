@@ -114,7 +114,7 @@ app.post('/threads/:id/messages', async (c) => {
         'The user is creating a NEW person. The first message describes who this person is.\n' +
         'Plan: (1) Call add_person with whatever name/email you can confidently extract.\n' +
         '(2) Capture the returned person_id from add_person.\n' +
-        '(3) Call dictate with that person_id and the original user message verbatim — dictate will pull out signals, needs, offers, tags, followups.\n' +
+        '(3) Call dictate with that person_id and the original user message verbatim — dictate will pull out signals, wants, tags, followups.\n' +
         'Keep the final reply short (1–2 sentences confirming who was added). The UI will redirect to /people/<id> as soon as add_person returns.',
     });
   }

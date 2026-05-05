@@ -1,5 +1,6 @@
 import type { Env } from '../../worker-configuration';
 import { cached, jsonCall, MODEL_HAIKU } from './anthropic';
+import type { Evidence, SignalKind } from './db';
 import { TAG_NAMING_RULES } from './tag_norm';
 
 const EXTRACT_GUIDE = `You extract structured updates from a meeting transcript or freetext dictation. The CRM has a single owner ("You" — the row with degree=0; refer to them as "You" in any prose you write). The transcript has TWO parties:
@@ -9,19 +10,55 @@ const EXTRACT_GUIDE = `You extract structured updates from a meeting transcript 
 
 If userPerson is null in the input, ignore microphone-side self-statements (no You record yet exists). Always populate person_updates / signals for the counterpart even when userPerson is present.
 
+CONCEPTUAL MODEL — wants, not needs/offers:
+We treat introductions as a marketplace of WANTS, not separate needs and offers.
+A want is anything the person is trying to do, get, give, find, or make happen
+right now. "Hiring a CTO", "raising a Series A", "wants to mentor early
+founders", "looking for a cofounder" — all wants. The matcher pairs wants that
+INTERLOCK across two people (founder wants capital ↔ funder wants deal flow).
+Do NOT split wants into "needs" vs "offers". One field. One concept.
+
+EVIDENCE — replaces the old confidence float:
+Every signal carries an evidence label, not a number:
+- "explicit"  — the speaker stated this directly. REQUIRES a verbatim quote in
+                 \`source_span\` taken from the transcript or note.
+- "inferred"  — derived from surrounding context (the person said something
+                 nearby that implies this; or the role/situation implies it).
+                 \`source_span\` may be a quote that supports the inference;
+                 leave null if there's no clean quote.
+- "weak"      — mentioned in passing, hedged, or only loosely implied.
+
+Never mark a signal "explicit" without a real quote. If you can't quote it,
+mark it "inferred" or "weak".
+
+ECHO HANDLING — don't duplicate facts you've seen before:
+The input includes existing_person.live_wants[] (and user_person.live_wants[]
+when applicable). These are wants ALREADY recorded for the person. When the
+current note says the same thing again, emit it as an ECHO that points at the
+existing signal id — do NOT emit a new "want" signal that duplicates an
+existing one. Use a fresh "want" signal only when the want is genuinely new or
+materially different. Use "status_change" or a superseding "want" when the
+person reports a contradiction (e.g. "we closed the round" vs an existing
+"raising a seed round" — emit a status_change AND mark the old want id in
+\`supersedes_signal_ids\` on a new signal).
+
 Goals:
-- Capture concrete signals (needs, offers, status changes, commitments) with confidence scores.
-- Update an LLM-maintained narrative \`context\` (paragraph) and freetext \`needs\` and \`offers\` fields.
-- Propose tags (emergent, lowercase, slash-namespaced when applicable, e.g. "trajectory/exploring founding").
-- Pull out followups the user has committed to ("I'll intro X to Y") — these always attach to the counterpart's profile.
+- Capture concrete signals (wants, status changes, commitments, notes) with
+  evidence + source_span (verbatim quote when explicit).
+- Update an LLM-maintained narrative \`context\` (paragraph) and a single
+  \`wants\` summary string (point-in-time freetext rollup; the source-of-truth
+  is the signals).
+- Propose tags (emergent, lowercase, slash-namespaced when applicable, e.g.
+  "trajectory/exploring founding").
+- Pull out followups the user has committed to ("I'll intro X to Y") — these
+  always attach to the counterpart's profile.
 
 Output shape (JSON, exactly this schema):
 {
   "person_updates": {                 // updates for the COUNTERPART
     "display_name"?: string,
     "context_delta"?: string,
-    "needs_replacement"?: string,
-    "offers_replacement"?: string,
+    "wants_replacement"?: string,
     "roles_add"?: string[],
     "trajectory_tags_add"?: string[],
     "home_location"?: string,         // city/area where they LIVE
@@ -30,15 +67,21 @@ Output shape (JSON, exactly this schema):
     "status_patch"?: object
   },
   "signals": [
-    { "kind": "need"|"offer"|"status_change"|"commitment"|"note",
+    { "kind": "want"|"status_change"|"commitment"|"note",
       "body": string,
-      "confidence": number }
+      "evidence": "explicit"|"inferred"|"weak",
+      "source_span"?: string,                    // verbatim quote; required when evidence=="explicit"
+      "supersedes_signal_ids"?: string[]         // ids from existing_person.live_wants this signal contradicts
+    }
+  ],
+  "echoes": [                             // wants restated, not new facts
+    { "signal_id": string,                // an id from existing_person.live_wants
+      "source_span"?: string }            // optional fresh quote affirming the want
   ],
   "user_updates"?: {                  // updates for the USER (microphone speaker), same shape; omit if nothing extracted
     "display_name"?: string,
     "context_delta"?: string,
-    "needs_replacement"?: string,
-    "offers_replacement"?: string,
+    "wants_replacement"?: string,
     "roles_add"?: string[],
     "trajectory_tags_add"?: string[],
     "home_location"?: string,
@@ -47,9 +90,14 @@ Output shape (JSON, exactly this schema):
     "status_patch"?: object
   },
   "user_signals"?: [
-    { "kind": "need"|"offer"|"status_change"|"commitment"|"note",
+    { "kind": "want"|"status_change"|"commitment"|"note",
       "body": string,
-      "confidence": number }
+      "evidence": "explicit"|"inferred"|"weak",
+      "source_span"?: string,
+      "supersedes_signal_ids"?: string[] }
+  ],
+  "user_echoes"?: [
+    { "signal_id": string, "source_span"?: string }
   ],
   "tag_proposals": [{ "name": string, "category": "trajectory"|"topic"|"skill"|"free" }],
   "followups": [{ "body": string, "due_date"?: string }],
@@ -60,7 +108,7 @@ Output shape (JSON, exactly this schema):
 Tags use SPACES, not underscores (e.g. "trajectory/raising seed"). The slash stays as the namespace separator.
 
 Rules:
-- Be conservative. Confidence < 0.6 means the user must confirm.
+- Be conservative. extraction_confidence < 0.6 means the user must confirm.
 - Only extract things the source actually states or strongly implies.
 - Don't invent dates. Use ISO 8601 if present in source.
 - Don't include Your own opinions about the counterpart; stick to what was said.
@@ -69,10 +117,15 @@ Rules:
 interface PersonContext {
   displayName: string | null;
   context: string | null;
-  needs: string | null;
-  offers: string | null;
+  /** Rolled-up freetext wants (the people.wants column). */
+  wants: string | null;
   roles: string[];
   trajectoryTags: string[];
+  /** Currently-live, non-superseded want signals on this person, exposed to
+   *  the LLM so it can detect echoes and supersession instead of inserting
+   *  duplicate rows. Each entry is a snippet — the body and the date last
+   *  validated. */
+  liveWants?: Array<{ id: string; body: string; last_validated_at: string }>;
 }
 
 export interface ExtractInput {
@@ -89,9 +142,19 @@ export interface ExtractInput {
 }
 
 export interface ExtractedSignal {
-  kind: 'need' | 'offer' | 'status_change' | 'commitment' | 'note';
+  kind: SignalKind;
   body: string;
-  confidence: number;
+  evidence: Evidence;
+  source_span?: string | null;
+  /** ids from existing_person.live_wants[] this signal supersedes. */
+  supersedes_signal_ids?: string[];
+}
+
+export interface ExtractedEcho {
+  /** Existing signal id (from existing_person.live_wants[]) being echoed. */
+  signal_id: string;
+  /** Optional fresh quote affirming the want from the new note. */
+  source_span?: string | null;
 }
 
 export interface ExtractedFollowup {
@@ -107,8 +170,7 @@ export interface ExtractedTagProposal {
 export interface ExtractedPersonUpdates {
   display_name?: string;
   context_delta?: string;
-  needs_replacement?: string;
-  offers_replacement?: string;
+  wants_replacement?: string;
   roles_add?: string[];
   trajectory_tags_add?: string[];
   home_location?: string;
@@ -120,9 +182,13 @@ export interface ExtractedPersonUpdates {
 export interface ExtractionResult {
   person_updates: ExtractedPersonUpdates;
   signals: ExtractedSignal[];
+  /** Existing wants restated in the new note. Bumps last_validated_at on
+   *  the referenced signal rather than inserting a duplicate. */
+  echoes?: ExtractedEcho[];
   /** Self-statements by the [microphone] speaker — updates for the user. */
   user_updates?: ExtractedPersonUpdates;
   user_signals?: ExtractedSignal[];
+  user_echoes?: ExtractedEcho[];
   tag_proposals: ExtractedTagProposal[];
   followups: ExtractedFollowup[];
   summary: string;

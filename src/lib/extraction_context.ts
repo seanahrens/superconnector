@@ -1,13 +1,14 @@
 // Helpers for loading the "person-shaped context" the extraction LLM needs
-// (display_name + free-text fields + roles/trajectory tags as arrays).
-// Inlined in three call sites (ingest.processNote, ingest.reprocessNote,
-// queue_resolve.materialize) before being centralized here.
+// (display_name + free-text fields + roles/trajectory tags as arrays + the
+// person's currently-live wants so the LLM can flag echoes/supersession
+// instead of inserting duplicate signal rows).
 
 import type { Env } from '../../worker-configuration';
 import type { PersonRow } from './db';
 import { parseJsonArray } from './db';
 import type { ExtractInput } from './extract';
 import { findMePerson } from './me';
+import { loadActiveWants } from './wants';
 
 type ExtractionPerson = NonNullable<ExtractInput['existingPerson']>;
 
@@ -16,11 +17,25 @@ export function personRowToExtractionContext(p: PersonRow | null | undefined): E
   return {
     displayName: p.display_name,
     context: p.context,
-    needs: p.needs,
-    offers: p.offers,
+    wants: p.wants,
     roles: parseJsonArray(p.roles),
     trajectoryTags: parseJsonArray(p.trajectory_tags),
   };
+}
+
+async function attachLiveWants(
+  env: Env,
+  ctx: ExtractionPerson | undefined,
+  personId: string,
+): Promise<ExtractionPerson | undefined> {
+  if (!ctx) return ctx;
+  const live = await loadActiveWants(env, personId, 30);
+  ctx.liveWants = live.map((w) => ({
+    id: w.id,
+    body: w.body,
+    last_validated_at: w.last_validated_at,
+  }));
+  return ctx;
 }
 
 export async function loadExtractionContext(
@@ -28,20 +43,20 @@ export async function loadExtractionContext(
   personId: string,
 ): Promise<ExtractionPerson | undefined> {
   const row = await env.DB.prepare(
-    `SELECT display_name, context, needs, offers, roles, trajectory_tags
+    `SELECT display_name, context, wants, roles, trajectory_tags
      FROM people WHERE id = ?1`,
   ).bind(personId).first<Pick<PersonRow,
-    'display_name' | 'context' | 'needs' | 'offers' | 'roles' | 'trajectory_tags'
+    'display_name' | 'context' | 'wants' | 'roles' | 'trajectory_tags'
   >>();
   if (!row) return undefined;
-  return {
+  const base: ExtractionPerson = {
     displayName: row.display_name,
     context: row.context,
-    needs: row.needs,
-    offers: row.offers,
+    wants: row.wants,
     roles: parseJsonArray(row.roles),
     trajectoryTags: parseJsonArray(row.trajectory_tags),
   };
+  return await attachLiveWants(env, base, personId);
 }
 
 // Shape that callers need before invoking extractFromMeeting +
@@ -58,9 +73,10 @@ export async function loadExtractionPeerContext(
   counterpartId: string,
 ): Promise<ExtractionPeerContext> {
   const me = await findMePerson(env);
+  const userPerson = personRowToExtractionContext(me);
   return {
     existingPerson: await loadExtractionContext(env, counterpartId),
-    userPerson: personRowToExtractionContext(me),
+    userPerson: me ? await attachLiveWants(env, userPerson, me.id) : undefined,
     mePersonId: me?.id ?? null,
   };
 }
