@@ -91,10 +91,8 @@ async function handleScheduled(event: ScheduledController, env: Env): Promise<vo
     console.log('ingest', result);
     return;
   }
-  if (cron === '0 13 * * *') {
-    await runDailyEmail(env);
-    return;
-  }
+  // Daily email cron (0 13 * * *) is disabled — see wrangler.toml [triggers].
+  // The manual /api/run/daily-email endpoint still works for one-off sends.
   if (cron === '0 9 1 * *') {
     const result = await runBackup(env);
     console.log('backup', result);

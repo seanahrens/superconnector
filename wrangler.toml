@@ -39,13 +39,15 @@ bucket_name = "superconnector-backups"
 
 # Cron triggers:
 #   */5 * * * *   ingest new Granola notes
-#   0 13 * * *    daily email at 06:00 America/Los_Angeles (13:00 UTC)
 #   0 9 1 * *     monthly D1 backup → R2 (1st of month, 09:00 UTC)
+#
+# Daily email (0 13 * * *) is disabled — re-add "0 13 * * *" here and restore
+# the dispatch branch in src/index.ts to turn it back on.
 #
 # If you ever migrate scheduling to /cron-hub, remove this block, redeploy,
 # and add equivalent entries to cron-hub/src/index.ts.
 [triggers]
-crons = ["*/5 * * * *", "0 13 * * *", "0 9 1 * *"]
+crons = ["*/5 * * * *", "0 9 1 * *"]
 
 # Observability
 [observability]
